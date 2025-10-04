@@ -3,20 +3,29 @@ import { motion } from 'framer-motion'
 import { useForm } from 'react-hook-form'
 import { Calendar, Clock, AlertCircle, CheckCircle } from 'lucide-react'
 import { useEnhancedBookingsStore, useEnhancedSatellitesStore } from '../stores/enhancedStores'
-import EnhancedSatelliteService from '../services/satelliteService_enhanced'
 import toast from 'react-hot-toast'
 import { api } from '../stores/authStore'
 
 const BookingPage = () => {
-  const { createBooking, isLoading } = useEnhancedBookingsStore()
+  const {
+    createReservation,
+    assessLaunchFeasibility,
+    checkConflicts: checkReservationConflicts,
+    lastFeasibility,
+    isLoading
+  } = useEnhancedBookingsStore()
   const { satellites } = useEnhancedSatellitesStore()
   const [conflictCheck, setConflictCheck] = useState(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [analysisError, setAnalysisError] = useState(null)
+  const [safetyReport, setSafetyReport] = useState(null)
+  const [feasibilityPending, setFeasibilityPending] = useState(false)
+  const activeSafety = useMemo(() => safetyReport ?? lastFeasibility, [safetyReport, lastFeasibility])
+  const minSeparationKm = activeSafety?.summary?.minimum_distance_km ?? null
+  const maxCollisionProbability = activeSafety?.summary?.max_collision_probability ?? null
+  const recommendedActions = activeSafety?.assessment?.recommendations ?? []
   
-  const satelliteService = new EnhancedSatelliteService()
-  
-  const { register, handleSubmit, watch, formState: { errors } } = useForm()
+  const { register, handleSubmit, watch, reset, formState: { errors } } = useForm()
   
   const watchedSatellite = watch('satellite_id')
   const watchedStartTime = watch('start_time')
@@ -66,12 +75,60 @@ const BookingPage = () => {
     return mapping[operationType] || 'OperationalSlot'
   }
 
+  const buildLaunchProfile = (data, selectedSat) => {
+    const altitude = selectedSat?.altitude ?? selectedSat?.alt_km ?? 500
+    const inclination = selectedSat?.inclination ?? selectedSat?.inclination_deg ?? 53
+
+    return {
+      vehicle_name: selectedSat?.name || 'Orbital Launch Vehicle',
+      epoch: new Date(data.start_time).toISOString(),
+      perigee_alt_km: altitude,
+      apogee_alt_km: altitude,
+      inclination_deg: inclination,
+      raan_deg: selectedSat?.raan ?? selectedSat?.raan_deg ?? 0,
+      arg_perigee_deg: selectedSat?.arg_perigee_deg ?? 0,
+      mean_anomaly_deg: selectedSat?.mean_anomaly_deg ?? 0,
+      proposed_norad_id: selectedSat?.norad_id ?? undefined
+    }
+  }
+
+  const buildFeasibilityPayload = (data, selectedSat) => {
+    const launchProfile = buildLaunchProfile(data, selectedSat)
+
+    return {
+      customer: data.customer_name || 'OrbitalOS Customer',
+      mission_name: data.mission_name || `${selectedSat?.name || 'Mission'} ${data.operation_type || ''}`.trim(),
+      launch: {
+        ...launchProfile,
+        // Backend expects without proposed_norad_id when undefined
+        proposed_norad_id: launchProfile.proposed_norad_id
+      },
+      window_hours: windowMinutes ? Math.ceil(windowMinutes / 60) || 1 : 1,
+      protection_radius_km: 5,
+      max_conjunction_probability: 0.001,
+      priority_level: 'Medium',
+      rideshare: data.is_rideshare || false
+    }
+  }
+
   const onSubmit = async (data) => {
     try {
       const selectedSat = satellites.find(s => s.id === data.satellite_id)
       if (!selectedSat) {
         toast.error('Please select a valid satellite')
         return
+      }
+
+      const feasibilityPayload = buildFeasibilityPayload(data, selectedSat)
+
+      try {
+        setFeasibilityPending(true)
+        const feasibilityAssessment = await assessLaunchFeasibility(feasibilityPayload)
+        setSafetyReport(feasibilityAssessment)
+      } catch (error) {
+        toast.error('Launch feasibility assessment failed')
+      } finally {
+        setFeasibilityPending(false)
       }
 
       // Create reservation request using enhanced API structure
@@ -94,14 +151,17 @@ const BookingPage = () => {
           notification_threshold_hours: 24,
           allow_debris_tracking: true,
           coordinate_system: "ECI"
-        }
+        },
+        new_launch: buildLaunchProfile(data, selectedSat)
       }
 
-      const result = await satelliteService.createReservation(reservationRequest)
+      const result = await createReservation(reservationRequest)
+      setSafetyReport(result?.safety ?? null)
       
       // Check for conflicts immediately after creation
-      if (result.reservation_id) {
-        const conflictCheck = await satelliteService.checkReservationConflicts(result.reservation_id)
+      const reservationId = result?.reservation?.id || result?.reservation_id
+      if (reservationId) {
+        const conflictCheck = await checkReservationConflicts(reservationId)
         if (conflictCheck.conflicts_found > 0) {
           setConflictCheck({
             hasConflict: true,
@@ -223,6 +283,40 @@ const BookingPage = () => {
                   )}
                 </div>
 
+                {/* Mission Details */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="label">Mission Name</label>
+                    <input
+                      type="text"
+                      {...register('mission_name')}
+                      placeholder="e.g., Aurora Deployment"
+                      className="input"
+                    />
+                  </div>
+                  <div>
+                    <label className="label">Customer Name</label>
+                    <input
+                      type="text"
+                      {...register('customer_name')}
+                      placeholder="e.g., Skylink Systems"
+                      className="input"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <input
+                    id="rideshare"
+                    type="checkbox"
+                    {...register('is_rideshare')}
+                    className="h-4 w-4 rounded border-gray-600 bg-gray-800 text-blue-500 focus:ring-blue-400"
+                  />
+                  <label htmlFor="rideshare" className="label text-sm font-normal text-gray-300">
+                    This is a rideshare mission
+                  </label>
+                </div>
+
                 {/* Time Selection */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
@@ -271,10 +365,10 @@ const BookingPage = () => {
                   
                   <button
                     type="submit"
-                    disabled={isLoading}
+                    disabled={isLoading || feasibilityPending}
                     className="btn btn-primary"
                   >
-                    {isLoading ? 'Submitting...' : 'Submit Request'}
+                    {feasibilityPending ? 'Assessing…' : isLoading ? 'Submitting...' : 'Submit Request'}
                   </button>
                 </div>
               </form>
@@ -366,6 +460,82 @@ const BookingPage = () => {
               <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-200">
                 {analysisError}
               </div>
+            )}
+
+            {/* Launch Feasibility */}
+            {activeSafety && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="card border border-blue-500/30 bg-blue-900/10"
+              >
+                <div className="flex items-center space-x-3">
+                  {activeSafety?.safe_to_launch
+                    ? <CheckCircle className="h-6 w-6 text-emerald-400" />
+                    : <AlertCircle className="h-6 w-6 text-amber-400" />}
+                  <div>
+                    <h3 className="font-semibold text-white">Launch Feasibility</h3>
+                    <p className="text-sm text-gray-300">
+                      {activeSafety?.safe_to_launch
+                        ? 'Launch corridor meets safety thresholds.'
+                        : 'Additional mitigation recommended before launch.'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 space-y-3 text-sm text-gray-200">
+                  <div>
+                    <span className="font-medium text-white">Conflicts Found:</span>
+                    <p className="mt-1 text-base font-semibold">
+                      {activeSafety?.summary?.conflicts_found ?? 0}
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 text-xs text-gray-300">
+                    <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                      <span className="block text-[11px] uppercase tracking-wide text-gray-400">Highest Severity</span>
+                      <span className="mt-1 text-sm font-semibold">
+                        {activeSafety?.summary?.highest_severity || 'Unknown'}
+                      </span>
+                    </div>
+                    <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                      <span className="block text-[11px] uppercase tracking-wide text-gray-400">Total Risk Score</span>
+                      <span className="mt-1 text-sm font-semibold">
+                        {(activeSafety?.summary?.total_risk_score ?? 0).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <span className="font-medium text-white">Minimum Separation:</span>
+                    <p className="mt-1 text-sm">
+                      {minSeparationKm != null
+                        ? `${minSeparationKm.toFixed(2)} km`
+                        : 'Not available'}
+                    </p>
+                  </div>
+
+                  <div>
+                    <span className="font-medium text-white">Max Collision Probability:</span>
+                    <p className="mt-1 text-sm">
+                      {maxCollisionProbability != null
+                        ? maxCollisionProbability.toExponential(2)
+                        : 'Not available'}
+                    </p>
+                  </div>
+
+                  {recommendedActions.length > 0 && (
+                    <div>
+                      <span className="font-medium text-white">Recommended Actions:</span>
+                      <ul className="mt-1 list-disc list-inside space-y-1 text-gray-300">
+                        {recommendedActions.slice(0, 3).map((action, idx) => (
+                          <li key={idx}>{action}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
             )}
 
             {/* Operation Guidelines */}

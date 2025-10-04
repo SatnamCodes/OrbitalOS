@@ -86,6 +86,8 @@ class EnhancedSatelliteService {
           alt_km: sat.alt_km,
           velocity: sat.velocity_km_s,
           velocity_km_s: sat.velocity_km_s,
+          tle_line1: sat.tle_line1 || null,
+          tle_line2: sat.tle_line2 || null,
           type: this.categorizeSatellite(sat.name),
           status: 'active',
           source: 'enhanced-api',
@@ -162,6 +164,8 @@ class EnhancedSatelliteService {
           alt_km: sat.alt_km,
           velocity: sat.velocity_km_s,
           velocity_km_s: sat.velocity_km_s,
+          tle_line1: sat.tle_line1 || null,
+          tle_line2: sat.tle_line2 || null,
           type: this.categorizeSatellite(sat.name),
           timestamp: sat.timestamp,
           riskLevel,
@@ -238,6 +242,32 @@ class EnhancedSatelliteService {
     
     console.log('📝 Created conjunction request:', request)
     return request
+  }
+
+  async assessLaunchFeasibility(feasibilityRequest) {
+    try {
+      console.log('🧪 Assessing launch feasibility...', feasibilityRequest)
+
+      const response = await fetch(`${this.apiUrl}/api/v1/missions/launch/feasibility`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(feasibilityRequest),
+        signal: AbortSignal.timeout(15000)
+      })
+
+      if (!response.ok) {
+        throw new Error(`Launch feasibility failed: ${response.status} ${response.statusText}`)
+      }
+
+      const result = await response.json()
+      console.log('✅ Launch feasibility assessment:', result)
+      return result
+    } catch (error) {
+      console.error('❌ Launch feasibility check failed:', error)
+      throw error
+    }
   }
 
   // Orbit reservation with enhanced API
@@ -379,6 +409,8 @@ class EnhancedSatelliteService {
         alt_km: altitude,
         velocity,
         velocity_km_s: velocity || null,
+        tle_line1: line1,
+        tle_line2: line2,
         type: this.categorizeSatellite(name),
         status: 'active',
         source: 'celestrak',

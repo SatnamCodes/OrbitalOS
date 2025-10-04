@@ -97,6 +97,10 @@ async fn main() -> std::io::Result<()> {
                         web::post().to(handlers::analyze_conjunctions),
                     )
                     .route("/risk/predict", web::post().to(handlers::predict_risk))
+                    .route(
+                        "/missions/launch/feasibility",
+                        web::post().to(handlers::assess_launch_feasibility),
+                    )
                     .route("/alerts/stream", web::get().to(handlers::stream_alerts))
                     // Orbit reservation management endpoints
                     .route(

@@ -137,6 +137,7 @@ export const useEnhancedBookingsStore = create((set, get) => ({
   reservations: [],
   isLoading: false,
   error: null,
+  lastFeasibility: null,
   satelliteService: new EnhancedSatelliteService(),
 
   // Create orbit reservation
@@ -149,11 +150,16 @@ export const useEnhancedBookingsStore = create((set, get) => ({
       
       const result = await satelliteService.createReservation(reservationData)
       
-      // Add to local state
+      const reservationEntry = {
+        reservation: result?.reservation ?? null,
+        safety: result?.safety ?? null
+      }
+
       set(state => ({
-        reservations: [result, ...state.reservations],
+        reservations: [reservationEntry, ...state.reservations],
         isLoading: false,
-        error: null
+        error: null,
+        lastFeasibility: result?.safety ?? state.lastFeasibility ?? null
       }))
       
       toast.success('Orbit reservation created successfully')
@@ -164,6 +170,20 @@ export const useEnhancedBookingsStore = create((set, get) => ({
       set({ isLoading: false, error: error.message })
       
       toast.error(`Reservation failed: ${error.message}`)
+      throw error
+    }
+  },
+
+  assessLaunchFeasibility: async (payload) => {
+    try {
+      const satelliteService = get().satelliteService
+      const assessment = await satelliteService.assessLaunchFeasibility(payload)
+
+      set({ lastFeasibility: assessment, error: null })
+      return assessment
+    } catch (error) {
+      console.error('❌ Launch feasibility check failed:', error)
+      set(state => ({ lastFeasibility: state.lastFeasibility, error: error.message }))
       throw error
     }
   },

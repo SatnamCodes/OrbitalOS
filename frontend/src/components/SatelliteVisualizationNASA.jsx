@@ -3,6 +3,14 @@ import { Canvas, useFrame } from '@react-three/fiber'
 import { OrbitControls, Stars, useTexture } from '@react-three/drei'
 import { Loader2, MapPin, RefreshCw } from 'lucide-react'
 import * as THREE from 'three'
+import {
+  eciToGeodetic,
+  degreesLat,
+  degreesLong,
+  gstime,
+  propagate,
+  twoline2satrec
+} from 'satellite.js'
 import EnhancedSatelliteService from '../services/satelliteService_enhanced'
 const ALTITUDE_SCALE = 20000 // Controls how far satellites sit from the globe
 const EARTH_RADIUS_KM = 6371
@@ -10,7 +18,8 @@ const SIDEREAL_DAY_SECONDS = 86164 // Earth's rotation period relative to stars
 const EARTH_ROTATION_RAD_PER_SEC = (Math.PI * 2) / SIDEREAL_DAY_SECONDS
 const REALTIME_REFRESH_MS = 5000
 const EPSILON = 1e-6
-const LONGITUDE_TEXTURE_OFFSET_RAD = Math.PI / 2
+
+const SATREC_CACHE = new Map()
 
 const getNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now())
 
@@ -19,25 +28,65 @@ const clamp01 = (value) => Math.min(Math.max(value, 0), 1)
 const ensureFinite = (value, fallback = 0) => (Number.isFinite(value) ? value : fallback)
 
 const createRenderDatum = (satellite) => {
-  const latitude = ensureFinite(satellite.latitude)
-  const longitude = ensureFinite(satellite.longitude)
-  const altitude = ensureFinite(satellite.altitude)
+  let latitude = ensureFinite(satellite.latitude ?? satellite.lat_deg)
+  let longitude = ensureFinite(satellite.longitude ?? satellite.lon_deg)
+  let altitude = ensureFinite(satellite.altitude ?? satellite.alt_km)
+  let velocity = ensureFinite(satellite.velocity ?? satellite.velocity_km_s)
+  let timestampMs = satellite.timestamp ? Date.parse(satellite.timestamp) : Date.now()
+  let propagated = false
+
+  const line1 = typeof satellite.tle_line1 === 'string' ? satellite.tle_line1.trim() : null
+  const line2 = typeof satellite.tle_line2 === 'string' ? satellite.tle_line2.trim() : null
+
+  if (line1 && line2 && line1.length > 30 && line2.length > 30) {
+    const cacheKey = `${line1}\n${line2}`
+    let satrec = SATREC_CACHE.get(cacheKey)
+
+    if (!satrec) {
+      try {
+        satrec = twoline2satrec(line1, line2)
+        SATREC_CACHE.set(cacheKey, satrec)
+      } catch (err) {
+        console.warn(`Failed to parse TLE for ${satellite.name}:`, err)
+        satrec = null
+      }
+    }
+
+    if (satrec) {
+      const propagationDate = new Date()
+      const positionVelocity = propagate(satrec, propagationDate)
+
+      if (positionVelocity.position) {
+        const gmst = gstime(propagationDate)
+        const geodetic = eciToGeodetic(positionVelocity.position, gmst)
+
+        latitude = ensureFinite(degreesLat(geodetic.latitude), latitude)
+        longitude = ensureFinite(degreesLong(geodetic.longitude), longitude)
+        altitude = ensureFinite(geodetic.height, altitude)
+        timestampMs = propagationDate.getTime()
+        propagated = true
+      }
+
+      if (positionVelocity.velocity) {
+        const { x: vx, y: vy, z: vz } = positionVelocity.velocity
+        const speed = Math.sqrt(vx * vx + vy * vy + vz * vz)
+        velocity = ensureFinite(speed, velocity)
+      }
+    }
+  }
 
   const latRad = THREE.MathUtils.degToRad(latitude)
   const lonRad = THREE.MathUtils.degToRad(longitude)
   const radius = 1 + Math.max(0, altitude) / ALTITUDE_SCALE
 
-  const theta = Math.PI / 2 - latRad
-  const phi = lonRad + LONGITUDE_TEXTURE_OFFSET_RAD
+  const cosLat = Math.cos(latRad)
+  const sinLat = Math.sin(latRad)
+  const cosLon = Math.cos(lonRad)
+  const sinLon = Math.sin(lonRad)
 
-  const sinTheta = Math.sin(theta)
-  const cosTheta = Math.cos(theta)
-  const cosPhi = Math.cos(phi)
-  const sinPhi = Math.sin(phi)
-
-  const x = -radius * cosPhi * sinTheta
-  const y = radius * cosTheta
-  const z = radius * sinPhi * sinTheta
+  const x = radius * cosLat * cosLon
+  const y = radius * sinLat
+  const z = radius * cosLat * sinLon
 
   const length = Math.hypot(x, y, z) || 1
   const dir = [x / length, y / length, z / length]
@@ -54,9 +103,14 @@ const createRenderDatum = (satellite) => {
     radius: length,
     radiusKm: EARTH_RADIUS_KM + Math.max(0, altitude),
     color: new Float32Array([color.r, color.g, color.b]),
-    timestampMs: satellite.timestamp ? Date.parse(satellite.timestamp) : Date.now(),
+    timestampMs,
     riskLevel,
-    riskScore: typeof satellite.riskScore === 'number' ? satellite.riskScore : null
+    riskScore: typeof satellite.riskScore === 'number' ? satellite.riskScore : null,
+    latitude,
+    longitude,
+    altitude,
+    velocity,
+    propagated
   }
 }
 
@@ -201,7 +255,7 @@ const Earth = React.memo(() => {
 
   return (
     <group>
-      <mesh>
+      <mesh rotation={[0, Math.PI, 0]}>
         <sphereGeometry args={[1, 128, 128]} />
         <meshStandardMaterial
           map={map}
@@ -212,7 +266,7 @@ const Earth = React.memo(() => {
           emissiveMap={emissiveMap}
         />
       </mesh>
-      <mesh ref={cloudsRef} scale={1.01}>
+      <mesh ref={cloudsRef} scale={1.01} rotation={[0, Math.PI, 0]}>
         <sphereGeometry args={[1, 128, 128]} />
         <meshStandardMaterial
           map={cloudsMap}
@@ -524,24 +578,32 @@ const SatelliteVisualizationNASA = () => {
     : null
 
   const selectedRiskLevel = useMemo(() => (
-    selectedSatellite
-      ? normalizeRiskLevel(selectedSatellite.riskLevel ?? selectedSatellite.risk_level)
-      : 'unknown'
-  ), [selectedSatellite])
+    selectedDatum?.riskLevel
+      ?? normalizeRiskLevel(selectedSatellite?.riskLevel ?? selectedSatellite?.risk_level)
+  ), [selectedDatum, selectedSatellite])
 
   const selectedRiskScore = useMemo(() => {
+    if (selectedDatum?.riskScore != null) {
+      return selectedDatum.riskScore
+    }
     if (!selectedSatellite) {
       return null
     }
     const value = selectedSatellite.riskScore ?? selectedSatellite.risk_score
     return typeof value === 'number' ? value : null
-  }, [selectedSatellite])
+  }, [selectedDatum, selectedSatellite])
 
   const selectedRiskReason = useMemo(() => (
     selectedSatellite?.riskReason
       ?? selectedSatellite?.risk_reason
       ?? 'Risk context unavailable.'
   ), [selectedSatellite])
+
+  const displayLatitude = selectedDatum?.latitude ?? selectedSatellite?.latitude ?? null
+  const displayLongitude = selectedDatum?.longitude ?? selectedSatellite?.longitude ?? null
+  const displayAltitude = selectedDatum?.altitude ?? selectedSatellite?.altitude ?? selectedSatellite?.alt_km ?? null
+  const displayVelocity = selectedDatum?.velocity ?? selectedSatellite?.velocity ?? selectedSatellite?.velocity_km_s ?? null
+  const displayTimestamp = selectedDatum?.timestampMs ?? (selectedSatellite?.timestamp ? Date.parse(selectedSatellite.timestamp) : null)
 
   useEffect(() => {
     if (selectedNoradId == null) {
@@ -678,19 +740,27 @@ const SatelliteVisualizationNASA = () => {
               </div>
               <div>
                 <span className="text-slate-500">Latitude</span>
-                <div>{selectedSatellite.latitude?.toFixed(2)}°</div>
+                <div>
+                  {displayLatitude != null ? `${displayLatitude.toFixed(2)}°` : '—'}
+                </div>
               </div>
               <div>
                 <span className="text-slate-500">Longitude</span>
-                <div>{selectedSatellite.longitude?.toFixed(2)}°</div>
+                <div>
+                  {displayLongitude != null ? `${displayLongitude.toFixed(2)}°` : '—'}
+                </div>
               </div>
               <div>
                 <span className="text-slate-500">Altitude</span>
-                <div>{selectedSatellite.altitude?.toFixed(0)} km</div>
+                <div>
+                  {displayAltitude != null ? `${displayAltitude.toFixed(0)} km` : '—'}
+                </div>
               </div>
               <div>
                 <span className="text-slate-500">Velocity</span>
-                <div>{selectedSatellite.velocity?.toFixed(2)} km/s</div>
+                <div>
+                  {displayVelocity != null ? `${displayVelocity.toFixed(2)} km/s` : '—'}
+                </div>
               </div>
               <div>
                 <span className="text-slate-500">Risk Score</span>
@@ -698,7 +768,11 @@ const SatelliteVisualizationNASA = () => {
               </div>
               <div>
                 <span className="text-slate-500">Last Update</span>
-                <div>{selectedSatellite.timestamp ? new Date(selectedSatellite.timestamp).toLocaleTimeString() : '—'}</div>
+                <div>
+                  {displayTimestamp
+                    ? new Date(displayTimestamp).toLocaleTimeString()
+                    : '—'}
+                </div>
               </div>
             </div>
           </div>

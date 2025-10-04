@@ -183,6 +183,45 @@ pub struct LaunchProfile {
     pub assigned_norad_id: u64,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct LaunchFeasibilityRequest {
+    pub customer: String,
+    pub mission_name: String,
+    pub launch: NewLaunchRequest,
+    #[serde(default)]
+    pub window_hours: Option<u64>,
+    #[serde(default)]
+    pub protection_radius_km: Option<f64>,
+    #[serde(default)]
+    pub max_conjunction_probability: Option<f64>,
+    #[serde(default)]
+    pub priority_level: Option<PriorityLevel>,
+    #[serde(default)]
+    pub rideshare: Option<bool>,
+    #[serde(default)]
+    pub constraints: Option<ReservationConstraints>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LaunchFeasibilitySummary {
+    pub conflicts_found: usize,
+    pub highest_severity: ConflictSeverity,
+    pub total_risk_score: f64,
+    pub minimum_distance_km: Option<f64>,
+    pub max_collision_probability: Option<f64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LaunchFeasibilityResult {
+    pub safe_to_launch: bool,
+    pub customer: String,
+    pub mission_name: String,
+    pub reservation_preview: OrbitReservation,
+    pub launch_profile: LaunchProfile,
+    pub assessment: ReservationCheckResponse,
+    pub summary: LaunchFeasibilitySummary,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ReservationCheckResponse {
     pub reservation_id: Uuid,
@@ -365,11 +404,21 @@ impl OrbitReservationManager {
         let reservation = self
             .reservations
             .get(&reservation_id)
+            .cloned()
             .ok_or_else(|| SatApiError::SatelliteNotFound(reservation_id.as_u128() as u64))?;
 
+        self.evaluate_conflicts_internal(&reservation, catalog_satellites, true)
+    }
+
+    fn evaluate_conflicts_internal(
+        &mut self,
+        reservation: &OrbitReservation,
+        catalog_satellites: &[SatelliteData],
+        record_history: bool,
+    ) -> Result<ReservationCheckResponse> {
         tracing::info!(
-            "Checking conflicts for reservation {} against {} satellites",
-            reservation_id,
+            "Evaluating conflicts for reservation {} against {} satellites",
+            reservation.id,
             catalog_satellites.len()
         );
 
@@ -377,7 +426,6 @@ impl OrbitReservationManager {
         let mut total_risk_score = 0.0;
         let mut highest_severity = ConflictSeverity::Low;
 
-        // Check each satellite in the catalog
         for satellite in catalog_satellites {
             if let Some(conflict) = self.check_satellite_conflict(reservation, satellite)? {
                 if conflict.severity > highest_severity {
@@ -388,9 +436,8 @@ impl OrbitReservationManager {
             }
         }
 
-        // Check for conflicts with other reservations
         for (other_id, other_reservation) in &self.reservations {
-            if *other_id != reservation_id {
+            if *other_id != reservation.id {
                 if let Some(conflict) =
                     self.check_reservation_overlap(reservation, other_reservation)?
                 {
@@ -399,16 +446,16 @@ impl OrbitReservationManager {
             }
         }
 
-        // Generate recommendations
         let recommendations = self.generate_recommendations(&conflicts, reservation);
 
-        // Store conflicts in history
-        for conflict in &conflicts {
-            self.conflict_history.push(conflict.clone());
+        if record_history {
+            for conflict in &conflicts {
+                self.conflict_history.push(conflict.clone());
+            }
         }
 
         Ok(ReservationCheckResponse {
-            reservation_id,
+            reservation_id: reservation.id,
             check_timestamp: Utc::now(),
             conflicts_found: conflicts.len(),
             highest_severity,
@@ -416,6 +463,134 @@ impl OrbitReservationManager {
             conflicts,
             recommendations,
         })
+    }
+
+    pub fn evaluate_launch_feasibility(
+        &mut self,
+        request: LaunchFeasibilityRequest,
+        catalog_satellites: &[SatelliteData],
+    ) -> Result<LaunchFeasibilityResult> {
+        let (center_tle, launch_profile) = Self::build_launch_satellite(&request.launch)
+            .map_err(|err| SatApiError::TleParseError(err))?;
+
+        let window_hours = request.window_hours.unwrap_or(6).clamp(1, 72);
+        let start_time = request.launch.epoch;
+        let end_time = start_time + Duration::hours(window_hours as i64);
+
+        let rideshare = request.rideshare.unwrap_or(false);
+        let protection_radius =
+            request
+                .protection_radius_km
+                .unwrap_or_else(|| if rideshare { 5.0 } else { 25.0 });
+
+        let probability_cap = request
+            .max_conjunction_probability
+            .unwrap_or_else(|| if rideshare { 1e-4 } else { 5e-5 })
+            .clamp(1e-8, 1.0);
+
+        let priority = request.priority_level.unwrap_or_else(|| {
+            if rideshare {
+                PriorityLevel::High
+            } else {
+                PriorityLevel::Medium
+            }
+        });
+
+        let constraints = request
+            .constraints
+            .unwrap_or_else(|| ReservationConstraints {
+                max_conjunction_probability: probability_cap,
+                minimum_separation_km: protection_radius,
+                notification_threshold_hours: 12,
+                allow_debris_tracking: true,
+                coordinate_system: CoordinateSystem::ECI,
+            });
+
+        let reservation = OrbitReservation {
+            id: Uuid::new_v4(),
+            owner: request.customer.clone(),
+            reservation_type: if rideshare {
+                ReservationType::OperationalSlot
+            } else {
+                ReservationType::LaunchCorridor
+            },
+            start_time,
+            end_time,
+            center_tle: center_tle.clone(),
+            protection_radius_km: protection_radius,
+            priority_level: priority,
+            status: ReservationStatus::Pending,
+            created_at: Utc::now(),
+            constraints: constraints.clone(),
+            launch_profile: Some(launch_profile.clone()),
+        };
+
+        let assessment =
+            self.evaluate_conflicts_internal(&reservation, catalog_satellites, false)?;
+
+        let (summary, safe_to_launch) =
+            OrbitReservationManager::summarize_feasibility(&reservation, &assessment);
+
+        Ok(LaunchFeasibilityResult {
+            safe_to_launch,
+            customer: request.customer,
+            mission_name: request.mission_name,
+            reservation_preview: reservation,
+            launch_profile,
+            assessment,
+            summary,
+        })
+    }
+
+    pub fn summarize_feasibility(
+        reservation: &OrbitReservation,
+        assessment: &ReservationCheckResponse,
+    ) -> (LaunchFeasibilitySummary, bool) {
+        let min_distance = if assessment.conflicts.is_empty() {
+            None
+        } else {
+            let min_value = assessment
+                .conflicts
+                .iter()
+                .map(|conflict| conflict.minimum_distance_km)
+                .fold(f64::INFINITY, f64::min);
+            if min_value.is_finite() {
+                Some(min_value)
+            } else {
+                None
+            }
+        };
+
+        let max_probability = if assessment.conflicts.is_empty() {
+            None
+        } else {
+            let max_value = assessment
+                .conflicts
+                .iter()
+                .map(|conflict| conflict.collision_probability)
+                .fold(0.0, f64::max);
+            if max_value.is_finite() {
+                Some(max_value)
+            } else {
+                None
+            }
+        };
+
+        let distance_ok = min_distance.map_or(true, |d| d >= reservation.protection_radius_km);
+        let probability_ok = max_probability.map_or(true, |p| {
+            p <= reservation.constraints.max_conjunction_probability
+        });
+        let severity_ok = assessment.highest_severity <= ConflictSeverity::Low;
+
+        let summary = LaunchFeasibilitySummary {
+            conflicts_found: assessment.conflicts_found,
+            highest_severity: assessment.highest_severity.clone(),
+            total_risk_score: assessment.total_risk_score,
+            minimum_distance_km: min_distance,
+            max_collision_probability: max_probability,
+        };
+
+        (summary, distance_ok && probability_ok && severity_ok)
     }
 
     fn check_satellite_conflict(

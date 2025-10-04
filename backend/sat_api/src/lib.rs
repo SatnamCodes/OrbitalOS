@@ -15,7 +15,8 @@ pub use conjunction::{
 pub use handlers::AppState;
 pub use ml::{RiskModel, RiskModelExplanation};
 pub use reservation::{
-    CreateReservationRequest, LaunchProfile, NewLaunchRequest, OrbitReservation,
+    CreateReservationRequest, LaunchFeasibilityRequest, LaunchFeasibilityResult,
+    LaunchFeasibilitySummary, LaunchProfile, NewLaunchRequest, OrbitReservation,
     OrbitReservationManager, ReservationCheckResponse,
 };
 pub use tle::{Result, RiskLevel, SatApiError, SatelliteData, SatelliteGroup, SatellitePosition};

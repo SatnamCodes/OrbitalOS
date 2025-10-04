@@ -2,7 +2,10 @@ use crate::alerts::{AlertCategory, AlertHub, AlertSeverity, LiveAlert};
 use crate::api::SatelliteApi;
 use crate::conjunction::{ConjunctionAnalyzer, ConjunctionRequest};
 use crate::ml::RiskModel;
-use crate::reservation::{CreateReservationRequest, OrbitReservationManager};
+use crate::reservation::{
+    CreateReservationRequest, LaunchFeasibilityRequest, LaunchFeasibilitySummary, OrbitReservation,
+    OrbitReservationManager, ReservationCheckResponse,
+};
 use crate::tle::{RiskLevel, SatellitePosition};
 use actix_web::web::Bytes;
 use actix_web::{http::header, web, HttpRequest, HttpResponse, Result as ActixResult};
@@ -79,6 +82,19 @@ pub struct RiskPredictionResponse {
     pub summary: RiskPredictionSummary,
     pub events: Vec<RiskPredictionConjunction>,
     pub model: crate::ml::RiskModelExplanation,
+}
+
+#[derive(Serialize)]
+pub struct ReservationSafetyReport {
+    pub safe_to_launch: bool,
+    pub summary: LaunchFeasibilitySummary,
+    pub assessment: ReservationCheckResponse,
+}
+
+#[derive(Serialize)]
+pub struct CreateReservationResponse {
+    pub reservation: OrbitReservation,
+    pub safety: Option<ReservationSafetyReport>,
 }
 
 const DEFAULT_TENANT: &str = "default";
@@ -571,6 +587,53 @@ pub async fn stream_alerts(
         .streaming(stream))
 }
 
+pub async fn assess_launch_feasibility(
+    data: web::Data<AppState>,
+    payload: web::Json<LaunchFeasibilityRequest>,
+) -> ActixResult<HttpResponse> {
+    let request = payload.into_inner();
+    tracing::info!(
+        "Assessing launch feasibility for mission '{}' (customer: {})",
+        request.mission_name,
+        request.customer
+    );
+
+    let catalog_positions = match data.satellite_api.get_all_satellites(None, None).await {
+        Ok(list) => list,
+        Err(e) => {
+            tracing::error!("Failed to load catalog for launch feasibility: {}", e);
+            return Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "catalog_load_failed",
+                "message": e.to_string()
+            })));
+        }
+    };
+
+    let satellite_data_catalog = catalog_to_satellite_data(&catalog_positions);
+
+    match data.reservation_manager.lock() {
+        Ok(mut manager) => {
+            match manager.evaluate_launch_feasibility(request, &satellite_data_catalog) {
+                Ok(result) => Ok(HttpResponse::Ok().json(result)),
+                Err(e) => {
+                    tracing::warn!("Launch feasibility evaluation failed: {}", e);
+                    Ok(HttpResponse::BadRequest().json(serde_json::json!({
+                        "error": "launch_feasibility_failed",
+                        "message": e.to_string()
+                    })))
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to acquire reservation manager lock: {}", e);
+            Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Service temporarily unavailable",
+                "message": "Could not access reservation manager"
+            })))
+        }
+    }
+}
+
 fn catalog_to_satellite_data(catalog: &[SatellitePosition]) -> Vec<crate::tle::SatelliteData> {
     catalog
         .iter()
@@ -597,20 +660,72 @@ pub async fn create_reservation(
 ) -> ActixResult<HttpResponse> {
     tracing::info!("Creating orbit reservation for owner: {}", request.owner);
 
+    let catalog_positions = match data.satellite_api.get_all_satellites(None, None).await {
+        Ok(list) => list,
+        Err(e) => {
+            tracing::error!("Failed to load catalog for reservation safety check: {}", e);
+            return Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "catalog_load_failed",
+                "message": e.to_string()
+            })));
+        }
+    };
+
+    let satellite_data_catalog = catalog_to_satellite_data(&catalog_positions);
+
     match data.reservation_manager.lock() {
-        Ok(mut manager) => match manager.create_reservation(request.into_inner()) {
-            Ok(reservation) => {
-                tracing::info!("Created reservation with ID: {}", reservation.id);
-                Ok(HttpResponse::Created().json(reservation))
+        Ok(mut manager) => {
+            let payload = request.into_inner();
+            match manager.create_reservation(payload) {
+                Ok(reservation) => {
+                    let assessment = match manager
+                        .check_reservation_conflicts(reservation.id, &satellite_data_catalog)
+                    {
+                        Ok(result) => result,
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to evaluate safety for reservation {}: {}",
+                                reservation.id,
+                                e
+                            );
+                            return Ok(HttpResponse::InternalServerError().json(
+                                serde_json::json!({
+                                    "error": "safety_check_failed",
+                                    "message": e.to_string()
+                                }),
+                            ));
+                        }
+                    };
+
+                    let (summary, safe_to_launch) =
+                        OrbitReservationManager::summarize_feasibility(&reservation, &assessment);
+
+                    tracing::info!(
+                        "Created reservation with ID: {} (safe_to_launch: {})",
+                        reservation.id,
+                        safe_to_launch
+                    );
+
+                    let response = CreateReservationResponse {
+                        reservation,
+                        safety: Some(ReservationSafetyReport {
+                            safe_to_launch,
+                            summary,
+                            assessment,
+                        }),
+                    };
+
+                    Ok(HttpResponse::Created().json(response))
+                }
+                Err(e) => {
+                    tracing::error!("Failed to create reservation: {}", e);
+                    Ok(HttpResponse::BadRequest().json(serde_json::json!({
+                        "error": "Failed to create reservation",
+                        "message": e.to_string()
+                    })))
+                }
             }
-            Err(e) => {
-                tracing::error!("Failed to create reservation: {}", e);
-                Ok(HttpResponse::BadRequest().json(serde_json::json!({
-                    "error": "Failed to create reservation",
-                    "message": e.to_string()
-                })))
-            }
-        },
+        }
         Err(e) => {
             tracing::error!("Failed to acquire reservation manager lock: {}", e);
             Ok(HttpResponse::InternalServerError().json(serde_json::json!({
