@@ -2,7 +2,30 @@
 
 **Predict. Prevent. Protect.** - Secure satellite operations platform with AI-driven collision prediction and intelligent booking system.
 
-## 🚀 Features
+## � Table of Contents
+
+- [🚀 Features](#-features)
+   - [✅ Completed MVP Features](#-completed-mvp-features)
+   - [🛠 Technology Stack](#-technology-stack)
+- [🏃‍♂️ Quick Start](#-quick-start)
+   - [Prerequisites](#prerequisites)
+   - [Option 1: Docker Compose (Recommended)](#option-1-docker-compose-recommended)
+   - [Option 2: Local Development](#option-2-local-development)
+- [🔐 Demo Credentials](#-demo-credentials)
+- [📊 API Endpoints](#-api-endpoints)
+- [🎯 User Roles](#-user-roles)
+- [🗂 Project Structure](#-project-structure)
+- [🔧 Development](#-development)
+- [🚀 Deployment](#-deployment)
+- [📈 Performance Features](#-performance-features)
+- [🔒 Security Features](#-security-features)
+- [🧪 Testing](#-testing)
+- [📝 Contributing](#-contributing)
+- [📄 License](#-license)
+- [🆘 Support](#-support)
+- [🔮 Future Enhancements](#-future-enhancements)
+
+## �🚀 Features
 
 ### ✅ Completed MVP Features
 
@@ -55,18 +78,18 @@
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/SatnamCodes/OrbitalOS.git
 cd OrbitalOS
 
-# Start all services
-cd orbitalos/infra
-docker-compose up -d
+# Start all services (use `docker-compose` if your CLI does not support `docker compose`)
+cd infra
+docker compose up -d
 
-# Wait for services to be ready
-docker-compose logs -f backend
+# Follow backend logs until the API is healthy
+docker compose logs -f backend
 
-# Seed the database
-docker-compose exec backend cargo run --bin seed_data
+# Seed the database with sample data
+docker compose exec backend cargo run --bin seed_data
 ```
 
 Access the application at:
@@ -74,39 +97,38 @@ Access the application at:
 - Backend API: http://localhost:3000
 - Database: localhost:5432
 
-### Option 2: Development Setup
+### Option 2: Local Development
 
 #### Backend Setup
 
 ```bash
-cd orbitalos/backend
+cd backend
 
-# Install dependencies
+# Install Rust dependencies
 cargo build
 
-# Set up environment
-cp env.example .env
-# Edit .env with your database credentials
+# Copy the environment template and customize as needed
+cp env.example .env  # On Windows PowerShell use: Copy-Item env.example .env
 
-# Start PostgreSQL (if not running)
-# Create database: orbitalos
+# Ensure PostgreSQL is running and that the database exists
+# DATABASE_URL should point to your local instance (see env.example)
 
-# Run migrations and seed data
+# Run migrations / seed data (adjust binary if custom seeds are used)
 cargo run --bin seed_data
 
-# Start the server
+# Launch the API server
 cargo run
 ```
 
 #### Frontend Setup
 
 ```bash
-cd orbitalos/frontend
+cd frontend
 
-# Install dependencies
+# Install Node dependencies
 npm install
 
-# Start development server
+# Start the Vite development server
 npm run dev
 ```
 
@@ -167,28 +189,17 @@ npm run dev
 
 ```
 OrbitalOS/
-├── orbitalos/
-│   ├── backend/           # Rust backend
-│   │   ├── src/
-│   │   │   ├── main.rs
-│   │   │   ├── models.rs
-│   │   │   ├── auth.rs
-│   │   │   ├── database.rs
-│   │   │   ├── routes/
-│   │   │   └── bin/
-│   │   └── Cargo.toml
-│   ├── frontend/          # React frontend
-│   │   ├── src/
-│   │   │   ├── pages/
-│   │   │   ├── components/
-│   │   │   ├── stores/
-│   │   │   └── App.jsx
-│   │   └── package.json
-│   ├── infra/             # Docker & deployment
-│   │   ├── Dockerfile
-│   │   ├── docker-compose.yml
-│   │   └── nginx.conf
-│   └── docs/              # Documentation
+├── backend/            # Rust Actix API, migrations, sat_api service
+│   ├── src/
+│   ├── migrations/
+│   └── Cargo.toml
+├── frontend/           # React + Vite client application
+│   ├── src/
+│   └── package.json
+├── ai/                 # AI models, notebooks, and risk engine experiments
+├── infra/              # Docker, nginx, and deployment automation
+├── scripts/            # Helper utilities (bundle builder, demos, etc.)
+├── docs/               # Additional documentation and design notes
 └── README.md
 ```
 
@@ -197,7 +208,7 @@ OrbitalOS/
 ### Backend Development
 
 ```bash
-cd orbitalos/backend
+cd backend
 
 # Run tests
 cargo test
@@ -215,7 +226,7 @@ cargo clippy
 ### Frontend Development
 
 ```bash
-cd orbitalos/frontend
+cd frontend
 
 # Run tests
 npm test
@@ -254,6 +265,30 @@ npm run lint
    docker-compose exec backend cargo run --bin seed_data
    ```
 
+### Windows Bundle (Backend + Frontend)
+
+For an all-in-one Windows distribution that serves the built React frontend from the Rust backend executable:
+
+1. Run the packaging script from the repository root:
+   ```powershell
+   pwsh scripts/build_windows_bundle.ps1
+   ```
+
+2. The bundle will be created under `artifacts\windows\OrbitalOS\` with:
+   - `orbitalos-backend.exe` – Actix backend that also serves static frontend assets.
+   - `dist\` – Production build of the frontend (copied next to the executable).
+   - `.env.example` and a `README.txt` with run instructions.
+
+3. To launch:
+   ```powershell
+   cd artifacts\windows\OrbitalOS
+   $env:PORT = "8082"          # optional override
+   $env:FRONTEND_DIST_DIR = "$PWD\dist"
+   .\orbitalos-backend.exe
+   ```
+
+4. Open `http://localhost:8082` in a browser to access the UI.
+
 ## 📈 Performance Features
 
 - **Web Workers** for orbit propagation calculations
@@ -275,13 +310,13 @@ npm run lint
 
 ### Backend Tests
 ```bash
-cd orbitalos/backend
+cd backend
 cargo test
 ```
 
 ### Frontend Tests
 ```bash
-cd orbitalos/frontend
+cd frontend
 npm test
 ```
 

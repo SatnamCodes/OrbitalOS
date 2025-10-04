@@ -3,18 +3,16 @@ import { Viewer, Entity, PolylineGraphics } from 'resium'
 import * as Cesium from 'cesium'
 import * as satellite from 'satellite.js'
 import { motion, AnimatePresence } from 'framer-motion'
-import { 
-  Play, 
-  Pause, 
-  RotateCcw, 
-  AlertTriangle, 
+import {
+  Play,
+  Pause,
+  RotateCcw,
+  AlertTriangle,
   CheckCircle,
-  Clock,
   Layers,
   RefreshCw,
 } from 'lucide-react'
-import { useEnhancedSatellitesStore } from '../stores/enhancedStores'  
-import { api } from '../stores/authStore'
+import { useEnhancedSatellitesStore, useEnhancedRiskStore } from '../stores/enhancedStores'
 import EnhancedConjunctionAnalysis from '../components/EnhancedConjunctionAnalysis'
 import EnhancedSatelliteService from '../services/satelliteService_enhanced'
 import toast from 'react-hot-toast'
@@ -22,11 +20,7 @@ import toast from 'react-hot-toast'
 // Set Cesium base URL
 window.CESIUM_BASE_URL = '/cesium/'
 
-const EARTH_RADIUS_KM = 6378.137
-const LEO_ALTITUDE_LIMIT_KM = 2000
-const MAX_LEO_SATELLITES = 180
 const TLE_REFRESH_INTERVAL_MS = 60_000
-const POSITION_UPDATE_INTERVAL_MS = 5_000
 
 const Visualizer = () => {
   const viewerRef = useRef()
@@ -50,7 +44,9 @@ const Visualizer = () => {
   const observerLocation = useMemo(() => ({ lat: 40.7128, lng: -74.0060 }), [])
   const satelliteService = useMemo(() => new EnhancedSatelliteService(), [])
   
-  const { satellites, loadSatellites, isLoading } = useEnhancedSatellitesStore()
+  const { satellites, loadSatellites } = useEnhancedSatellitesStore()
+  const { riskData, loadRiskData } = useEnhancedRiskStore()
+  const catalogSatellites = useMemo(() => satellites ?? [], [satellites])
 
   const formatNumber = (value, fractionDigits = 2, suffix = '') => {
     if (value === null || value === undefined) {
@@ -415,9 +411,13 @@ const Visualizer = () => {
   }
 
   return (
-    <div className="min-h-[calc(100vh-7rem)] bg-gray-900 flex">
+    <div className="relative flex h-screen w-full overflow-hidden text-white">
+      <div className="absolute inset-0 -z-[40] bg-[#01010a]" />
+      <div className="absolute inset-0 -z-[30] bg-[radial-gradient(circle_at_top,_rgba(79,70,229,0.24),_transparent_65%)] pointer-events-none" />
+      <div className="absolute inset-0 -z-[20] bg-[radial-gradient(circle_at_bottom,_rgba(59,130,246,0.18),_transparent_60%)] pointer-events-none" />
+
       {/* Main 3D Viewer */}
-      <div className="flex-1 relative">
+      <div className="relative flex-1">
         <Viewer
           ref={viewerRef}
           full
@@ -590,137 +590,179 @@ const Visualizer = () => {
         </Viewer>
 
         {/* Time Controls */}
-        <div className="absolute top-4 left-4 bg-gray-800/90 backdrop-blur-sm rounded-lg p-4 border border-gray-700">
-          <div className="flex items-center space-x-3">
-            <button
-              onClick={togglePlayPause}
-              className="p-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
-            >
-              {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
-            </button>
-            <button
-              onClick={resetTime}
-              className="p-2 bg-gray-600 hover:bg-gray-700 rounded-lg transition-colors"
-            >
-              <RotateCcw className="h-5 w-5" />
-            </button>
-            <button
-              onClick={refreshLeoSatellites}
-              disabled={isLoadingRealTime}
-              className="p-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 rounded-lg transition-colors"
-            >
-              <RefreshCw className={`h-5 w-5 ${isLoadingRealTime ? 'animate-spin' : ''}`} />
-            </button>
-            <div className="flex items-center space-x-2">
-              <Clock className="h-4 w-4 text-gray-400" />
-              <span className="text-sm text-gray-300">
-                {currentTime.toLocaleTimeString()}
+        <motion.div
+          initial={{ opacity: 0, x: -40 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="glass-panel absolute top-6 left-6 z-20 w-80 p-6 text-white/90"
+        >
+          <div className="relative z-10 space-y-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold tracking-tight">Orbital timeline</h2>
+                <p className="mt-1 text-xs uppercase tracking-[0.28em] text-white/50">{currentTime.toLocaleTimeString()}</p>
+              </div>
+              <span className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.35em] text-white/60">
+                <span className={`h-2 w-2 rounded-full ${isLoadingRealTime ? 'bg-amber-300 animate-pulse' : 'bg-emerald-300'}`} />
+                {isLoadingRealTime ? 'Syncing' : 'Live'}
               </span>
             </div>
-          </div>
-          
-          <div className="mt-3">
-            <label className="text-xs text-gray-400">Speed</label>
-            <input
-              type="range"
-              min="0.1"
-              max="10"
-              step="0.1"
-              value={timeSpeed}
-              onChange={(e) => setTimeSpeed(parseFloat(e.target.value))}
-              className="w-full mt-1"
-            />
-            <div className="text-xs text-gray-400 text-center">{timeSpeed}x</div>
-          </div>
 
-          {demoMode && (
-            <div className="mt-3 text-xs text-amber-300 flex items-center gap-2">
-              <span className="inline-flex h-2 w-2 rounded-full bg-amber-300 animate-pulse" />
-              <span>Demo data active</span>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <button
+                onClick={togglePlayPause}
+                className="btn btn-primary justify-start px-4 py-2 text-xs"
+              >
+                {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                {isPlaying ? 'Pause orbit' : 'Resume orbit'}
+              </button>
+              <button
+                onClick={resetTime}
+                className="btn btn-secondary justify-start px-4 py-2 text-xs"
+              >
+                <RotateCcw className="h-4 w-4" />
+                Reset clock
+              </button>
+              <button
+                onClick={refreshLeoSatellites}
+                disabled={isLoadingRealTime}
+                className="btn btn-secondary justify-start px-4 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <RefreshCw className={`h-4 w-4 ${isLoadingRealTime ? 'animate-spin' : ''}`} />
+                Refresh feed
+              </button>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-xs text-white/70">
+                <p className="uppercase tracking-[0.32em] text-white/40">Speed</p>
+                <p className="mt-2 text-lg font-semibold text-white/90">{timeSpeed.toFixed(1)}x</p>
+              </div>
             </div>
-          )}
-        </div>
+
+            <div>
+              <input
+                type="range"
+                min="0.1"
+                max="10"
+                step="0.1"
+                value={timeSpeed}
+                onChange={(e) => setTimeSpeed(parseFloat(e.target.value))}
+                className="h-1 w-full cursor-pointer appearance-none rounded-full bg-white/20"
+              />
+              <div className="mt-2 flex items-center justify-between text-[11px] uppercase tracking-[0.28em] text-white/40">
+                <span>0.1x</span>
+                <span>Realtime</span>
+                <span>10x</span>
+              </div>
+            </div>
+          </div>
+        </motion.div>
 
         {/* Layer Controls */}
-        <div className="absolute top-4 right-4 bg-gray-800/90 backdrop-blur-sm rounded-lg p-4 border border-gray-700">
-          <div className="flex items-center space-x-2 mb-3">
-            <Layers className="h-4 w-4 text-gray-400" />
-            <span className="text-sm font-medium text-gray-300">Layers</span>
-          </div>
-          
-          <div className="space-y-2">
-            <label className="flex items-center space-x-2 text-sm text-gray-300">
-              <input
-                type="checkbox"
-                checked={showRiskOverlay}
-                onChange={(e) => setShowRiskOverlay(e.target.checked)}
-                className="rounded"
-              />
-              <span>Risk Overlay</span>
-            </label>
-            <label className="flex items-center space-x-2 text-sm text-gray-300">
-              <input
-                type="checkbox"
-                checked={showRealTimeLayer}
-                onChange={(e) => setShowRealTimeLayer(e.target.checked)}
-                className="rounded"
-              />
-              <span>Live Overhead</span>
-            </label>
-            <label className="flex items-center space-x-2 text-sm text-gray-300">
-              <input
-                type="checkbox"
-                checked={showConjunctionAnalysis}
-                onChange={(e) => setShowConjunctionAnalysis(e.target.checked)}
-                className="rounded"
-              />
-              <span>Conjunction Analysis</span>
-            </label>
-            <label className="flex items-center space-x-2 text-sm text-gray-300">
-              <input
-                type="checkbox"
-                checked={showCatalogLayer}
-                onChange={(e) => setShowCatalogLayer(e.target.checked)}
-                className="rounded"
-              />
-              <span>Catalog Orbits</span>
-            </label>
-            <label className="flex items-center space-x-2 text-sm text-gray-300">
-              <input
-                type="checkbox"
-                checked={showGroundStations}
-                onChange={(e) => setShowGroundStations(e.target.checked)}
-                className="rounded"
-              />
-              <span>Ground Stations</span>
-            </label>
-          </div>
-
-          {showGroundStations && (
-            <div className="mt-3 text-xs text-blue-300">
-              Ground station layer coming soon.
+        <motion.div
+          initial={{ opacity: 0, x: 40 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="glass-panel absolute top-6 right-6 z-20 w-80 p-6 text-white/80"
+        >
+          <div className="relative z-10 space-y-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold uppercase tracking-[0.32em] text-white/50">
+                  Visualization layers
+                </h3>
+                <p className="mt-1 text-xs text-white/50">Toggle overlays in the orbital scene.</p>
+              </div>
+              <span className="flex h-8 w-8 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white/60">
+                <Layers className="h-4 w-4" />
+              </span>
             </div>
-          )}
-        </div>
+
+            <div className="space-y-3 text-sm text-white/80">
+              <label className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <span>Risk overlay</span>
+                <input
+                  type="checkbox"
+                  checked={showRiskOverlay}
+                  onChange={(e) => setShowRiskOverlay(e.target.checked)}
+                  className="h-4 w-4 rounded-md border border-white/30 bg-transparent accent-rose-400"
+                />
+              </label>
+              <label className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <span>Live overhead</span>
+                <input
+                  type="checkbox"
+                  checked={showRealTimeLayer}
+                  onChange={(e) => setShowRealTimeLayer(e.target.checked)}
+                  className="h-4 w-4 rounded-md border border-white/30 bg-transparent accent-sky-400"
+                />
+              </label>
+              <label className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <span>Conjunction analysis</span>
+                <input
+                  type="checkbox"
+                  checked={showConjunctionAnalysis}
+                  onChange={(e) => setShowConjunctionAnalysis(e.target.checked)}
+                  className="h-4 w-4 rounded-md border border-white/30 bg-transparent accent-violet-400"
+                />
+              </label>
+              <label className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <span>Catalog orbits</span>
+                <input
+                  type="checkbox"
+                  checked={showCatalogLayer}
+                  onChange={(e) => setShowCatalogLayer(e.target.checked)}
+                  className="h-4 w-4 rounded-md border border-white/30 bg-transparent accent-emerald-400"
+                />
+              </label>
+              <label className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <span>Ground stations</span>
+                <input
+                  type="checkbox"
+                  checked={showGroundStations}
+                  onChange={(e) => setShowGroundStations(e.target.checked)}
+                  className="h-4 w-4 rounded-md border border-white/30 bg-transparent accent-purple-400"
+                />
+              </label>
+            </div>
+
+            {showGroundStations && (
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-xs text-white/60">
+                Ground station layer is being calibrated and will be available soon.
+              </div>
+            )}
+          </div>
+        </motion.div>
 
         {/* Legend */}
-        <div className="absolute bottom-4 left-4 bg-gray-800/90 backdrop-blur-sm rounded-lg p-4 border border-gray-700">
-          <h3 className="text-sm font-medium text-gray-300 mb-3">Risk Levels</h3>
-          <div className="space-y-2">
-            <div className="flex items-center space-x-2 text-sm">
-              <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-              <span className="text-gray-300">Safe</span>
-            </div>
-            <div className="flex items-center space-x-2 text-sm">
-              <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
-              <span className="text-gray-300">Warning</span>
-            </div>
-            <div className="flex items-center space-x-2 text-sm">
-              <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-              <span className="text-gray-300">Critical</span>
+        <motion.div
+          initial={{ opacity: 0, y: 40 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="glass-panel absolute bottom-6 left-6 z-20 w-72 p-6 text-white/85"
+        >
+          <div className="relative z-10 space-y-4">
+            <h3 className="text-xs font-semibold uppercase tracking-[0.4em] text-white/50">Risk levels</h3>
+            <div className="space-y-3 text-sm">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="h-3 w-3 rounded-full bg-emerald-400" />
+                  <span>Safe corridor</span>
+                </div>
+                <span className="text-white/40"><CheckCircle className="h-4 w-4" /></span>
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="h-3 w-3 rounded-full bg-amber-400" />
+                  <span>Watch</span>
+                </div>
+                <span className="text-white/40">Δv advisory</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="h-3 w-3 rounded-full bg-rose-500" />
+                  <span>Critical</span>
+                </div>
+                <span className="text-white/40">Immediate response</span>
+              </div>
             </div>
           </div>
-        </div>
+        </motion.div>
       </div>
 
       {/* Conjunction Analysis Panel */}
@@ -731,9 +773,9 @@ const Visualizer = () => {
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: -400, opacity: 0 }}
             transition={{ duration: 0.3 }}
-            className="w-96 bg-gray-800 border-r border-gray-700 overflow-y-auto"
+            className="glass-panel m-6 ml-0 w-96 overflow-y-auto px-6 py-6 text-white/85"
           >
-            <ConjunctionAnalysis
+            <EnhancedConjunctionAnalysis
               satelliteService={satelliteService}
               onAnalysisComplete={(results) => setConjunctionResults(results)}
               onClose={() => setShowConjunctionAnalysis(false)}
@@ -750,51 +792,51 @@ const Visualizer = () => {
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: 300, opacity: 0 }}
             transition={{ duration: 0.3 }}
-            className="w-80 bg-gray-800 border-l border-gray-700 p-6 overflow-y-auto"
+            className="glass-panel m-6 mr-0 w-80 overflow-y-auto px-6 py-6 text-white/90"
           >
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-white">Satellite Details</h2>
+              <h2 className="text-lg font-semibold tracking-tight text-white/90">Satellite details</h2>
               <button
                 onClick={() => setSelectedSatellite(null)}
-                className="text-gray-400 hover:text-white"
+                className="flex h-8 w-8 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white/60 transition hover:border-white/40 hover:bg-white/20 hover:text-white"
               >
                 ×
               </button>
             </div>
 
             <div className="space-y-4">
-              <div>
-                <h3 className="text-sm font-medium text-gray-400 mb-1">Name</h3>
-                <p className="text-white">{selectedSatellite.name}</p>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <h3 className="text-xs uppercase tracking-[0.28em] text-white/40">Name</h3>
+                <p className="mt-2 text-sm font-semibold text-white/90">{selectedSatellite.name}</p>
               </div>
 
-              <div>
-                <h3 className="text-sm font-medium text-gray-400 mb-1">NORAD ID</h3>
-                <p className="text-white">{selectedSatellite.norad_id}</p>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <h3 className="text-xs uppercase tracking-[0.28em] text-white/40">NORAD ID</h3>
+                <p className="mt-2 font-mono text-white/90">{selectedSatellite.norad_id}</p>
               </div>
 
-              <div>
-                <h3 className="text-sm font-medium text-gray-400 mb-1">Operator</h3>
-                <p className="text-white">{selectedSatellite.operator || 'Not available'}</p>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <h3 className="text-xs uppercase tracking-[0.28em] text-white/40">Operator</h3>
+                <p className="mt-2 text-sm text-white/80">{selectedSatellite.operator || 'Not available'}</p>
               </div>
 
               {selectedSatellite.source && (
-                <div>
-                  <h3 className="text-sm font-medium text-gray-400 mb-1">Source</h3>
-                  <p className="text-xs inline-flex items-center gap-2 rounded-full border border-gray-600 px-3 py-1 text-amber-200 uppercase tracking-wide">
+                <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                  <h3 className="text-xs uppercase tracking-[0.28em] text-white/40">Source</h3>
+                  <p className="mt-2 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.32em] text-amber-200">
                     {selectedSatellite.source === 'real-time' ? 'Real-time stream' : 'Mission catalog'}
                   </p>
                 </div>
               )}
 
-              <div>
-                <h3 className="text-sm font-medium text-gray-400 mb-1">Altitude</h3>
-                <p className="text-white">{formatNumber(selectedSatellite.altitude, 2, ' km')}</p>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <h3 className="text-xs uppercase tracking-[0.28em] text-white/40">Altitude</h3>
+                <p className="mt-2 font-mono text-white/90">{formatNumber(selectedSatellite.altitude, 2, ' km')}</p>
               </div>
 
-              <div>
-                <h3 className="text-sm font-medium text-gray-400 mb-1">Inclination</h3>
-                <p className="text-white">{formatNumber(selectedSatellite.inclination, 2, '°')}</p>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <h3 className="text-xs uppercase tracking-[0.28em] text-white/40">Inclination</h3>
+                <p className="mt-2 font-mono text-white/90">{formatNumber(selectedSatellite.inclination, 2, '°')}</p>
               </div>
 
               {/* Risk Assessment */}
@@ -804,35 +846,35 @@ const Visualizer = () => {
                 const RiskIcon = getRiskIcon(selectedSatellite)
                 const riskLevelClass =
                   risk.risk_level === 'critical'
-                    ? 'text-red-400'
+                    ? 'text-rose-300'
                     : risk.risk_level === 'warning'
-                    ? 'text-yellow-400'
-                    : 'text-green-400'
+                    ? 'text-amber-300'
+                    : 'text-emerald-300'
 
                 return (
-                  <div className="mt-6 p-4 bg-gray-700 rounded-lg">
-                    <h3 className="text-sm font-medium text-gray-300 mb-3">Risk Assessment</h3>
-                    <div className="space-y-2">
+                  <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
+                    <h3 className="text-xs uppercase tracking-[0.28em] text-white/40">Risk assessment</h3>
+                    <div className="mt-3 space-y-3 text-sm">
                       <div className="flex items-center justify-between">
-                        <span className="text-sm text-gray-400">Risk Level</span>
-                        <span className={`flex items-center gap-2 text-sm font-medium ${riskLevelClass}`}>
+                        <span className="text-white/60">Risk level</span>
+                        <span className={`flex items-center gap-2 text-sm font-semibold ${riskLevelClass}`}>
                           <RiskIcon className="h-4 w-4" />
                           {risk.risk_level.toUpperCase()}
                         </span>
                       </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-gray-400">Risk Score</span>
-                        <span className="text-sm text-white">{formatNumber(risk.risk_score * 100, 1, '%')}</span>
+                      <div className="flex items-center justify-between text-white/70">
+                        <span>Risk score</span>
+                        <span className="font-mono text-white/90">{formatNumber(risk.risk_score * 100, 1, '%')}</span>
                       </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-gray-400">Collision Probability</span>
-                        <span className="text-sm text-white">{formatNumber(risk.collision_probability * 100, 2, '%')}</span>
+                      <div className="flex items-center justify-between text-white/70">
+                        <span>Collision probability</span>
+                        <span className="font-mono text-white/90">{formatNumber(risk.collision_probability * 100, 2, '%')}</span>
                       </div>
                     </div>
-                    
+
                     {risk.suggested_maneuver && (
-                      <div className="mt-3 p-2 bg-blue-900/30 rounded border border-blue-700">
-                        <p className="text-xs text-blue-300">{risk.suggested_maneuver}</p>
+                      <div className="mt-3 rounded-2xl border border-white/10 bg-sky-500/10 px-3 py-2 text-xs text-sky-200">
+                        {risk.suggested_maneuver}
                       </div>
                     )}
                   </div>
@@ -845,26 +887,6 @@ const Visualizer = () => {
     </div>
   )
 }
-
-// Helper function to generate simple orbit trace for real-time satellites
-function generateSimpleOrbitTrace(satellite = {}) {
-  const positions = []
-  const steps = 60
-  const altitudeMeters = (6371 + (satellite.satalt ?? 550)) * 1000
-  const inclination = Cesium.Math.toRadians(satellite.inclination ?? 45)
-
-  for (let i = 0; i <= steps; i++) {
-    const angle = (i / steps) * Cesium.Math.TWO_PI
-    const x = altitudeMeters * Math.cos(angle)
-    const y = altitudeMeters * Math.sin(angle) * Math.cos(inclination)
-    const z = altitudeMeters * Math.sin(angle) * Math.sin(inclination)
-
-    positions.push(new Cesium.Cartesian3(x, y, z))
-  }
-  
-  return positions
-}
-
 // Helper function to generate orbit trace
 function generateOrbitTrace(satellite) {
   const positions = []

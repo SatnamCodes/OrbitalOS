@@ -1,9 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { useForm } from 'react-hook-form'
 import { Calendar, Clock, AlertCircle, CheckCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { api } from '../stores/authStore'
 import { useEnhancedBookingsStore, useEnhancedSatellitesStore } from '../stores/enhancedStores'
 
 const BookingPage = () => {
@@ -11,6 +10,8 @@ const BookingPage = () => {
     createReservation,
     assessLaunchFeasibility,
     checkConflicts: checkReservationConflicts,
+    analyzeConjunctions,
+    predictRisk,
     lastFeasibility,
     isLoading
   } = useEnhancedBookingsStore()
@@ -24,6 +25,10 @@ const BookingPage = () => {
   const [orbitRecommendation, setOrbitRecommendation] = useState(null)
   const [isRecommending, setIsRecommending] = useState(false)
   const [recommendationError, setRecommendationError] = useState(null)
+  const [existingMissionReport, setExistingMissionReport] = useState(null)
+  const [isAutoAnalyzingExisting, setIsAutoAnalyzingExisting] = useState(false)
+  const existingAnalysisDebounceRef = useRef(null)
+  const existingAnalysisRunRef = useRef(0)
 
   const activeSafety = useMemo(
     () => safetyReport ?? lastFeasibility,
@@ -66,6 +71,8 @@ const BookingPage = () => {
     setSafetyReport(null)
     setRecommendationError(null)
     setOrbitRecommendation(null)
+  setExistingMissionReport(null)
+  setIsAutoAnalyzingExisting(false)
 
     if (plannerMode === 'new') {
       setValue('satellite_id', '')
@@ -89,6 +96,33 @@ const BookingPage = () => {
     [satellites, watchedSatellite]
   )
 
+  const highRiskNoradIds = useMemo(() => {
+    const prioritized = satellites
+      .filter((sat) => {
+        const riskValue = (sat.riskLevel || sat.risk_level || '').toString().toLowerCase()
+        return ['critical', 'red', 'high', 'orange'].includes(riskValue)
+      })
+      .map((sat) => Number(sat.norad_id))
+      .filter((value) => Number.isFinite(value))
+
+    return prioritized.slice(0, 25)
+  }, [satellites])
+
+  const fallbackNoradIds = useMemo(() => {
+    const unique = new Set(highRiskNoradIds)
+
+    satellites
+      .map((sat) => Number(sat.norad_id))
+      .filter((value) => Number.isFinite(value))
+      .forEach((value) => {
+        if (unique.size < 60) {
+          unique.add(value)
+        }
+      })
+
+    return Array.from(unique)
+  }, [satellites, highRiskNoradIds])
+
   const windowMinutes = useMemo(() => {
     if (!watchedStartTime || !watchedEndTime) {
       return null
@@ -98,6 +132,49 @@ const BookingPage = () => {
     const diff = (end.getTime() - start.getTime()) / 60000
     return Number.isFinite(diff) && diff > 0 ? Math.max(10, Math.round(diff)) : null
   }, [watchedStartTime, watchedEndTime])
+
+  const clampHorizonHours = useCallback((hours) => {
+    if (!Number.isFinite(hours)) {
+      return 24
+    }
+    return Math.max(1, Math.min(168, Math.round(hours)))
+  }, [])
+
+  const getTargetNoradIds = useCallback((primaryNoradId) => {
+    const ids = new Set(fallbackNoradIds)
+    if (Number.isFinite(primaryNoradId)) {
+      ids.add(Number(primaryNoradId))
+    }
+    return Array.from(ids).slice(0, 60)
+  }, [fallbackNoradIds])
+
+  const buildConjunctionOptions = useCallback(({
+    primaryNoradId,
+    horizonHours,
+    screeningDistanceKm = 50,
+    probabilityThreshold = 1e-4,
+    requestedWindowStart,
+    requestedWindowEnd
+  }) => ({
+    satelliteIds: getTargetNoradIds(primaryNoradId),
+    horizonHours: clampHorizonHours(horizonHours),
+    screeningDistanceKm,
+    probabilityThreshold,
+    requestedWindowStart,
+    requestedWindowEnd
+  }), [clampHorizonHours, getTargetNoradIds])
+
+  const buildRiskRequestPayload = useCallback(({
+    primaryNoradId,
+    horizonHours,
+    screeningDistanceKm = 25,
+    probabilityThreshold = 1e-4
+  }) => ({
+    satellite_ids: getTargetNoradIds(primaryNoradId),
+    horizon_hours: clampHorizonHours(horizonHours),
+    screening_distance_km: screeningDistanceKm,
+    probability_threshold: probabilityThreshold
+  }), [clampHorizonHours, getTargetNoradIds])
 
   const canRunExistingAnalysis = Boolean(
     plannerMode === 'existing' && watchedSatellite && watchedStartTime && watchedEndTime
@@ -215,18 +292,97 @@ const BookingPage = () => {
     }
   }
 
-  const runConflictAnalysis = async (analysisPayload, contextLabel = 'existing', { silentToast = false } = {}) => {
-    setIsAnalyzing(true)
+  const summarizeSatelliteOrbit = useCallback((sat) => {
+    if (!sat) return null
+
+    const nominalAltitude = Number.isFinite(sat.altitude)
+      ? sat.altitude
+      : Number.isFinite(sat.alt_km)
+        ? sat.alt_km
+        : Number.isFinite(sat.mean_altitude_km)
+          ? sat.mean_altitude_km
+          : null
+
+    const inclinationValue = Number.isFinite(sat.inclination)
+      ? sat.inclination
+      : Number.isFinite(sat.inclination_deg)
+        ? sat.inclination_deg
+        : null
+
+    const velocityValue = Number.isFinite(sat.velocity_km_s)
+      ? sat.velocity_km_s
+      : Number.isFinite(sat.velocity)
+        ? sat.velocity
+        : null
+
+    return {
+      perigee_km: nominalAltitude,
+      apogee_km: nominalAltitude,
+      mean_altitude_km: nominalAltitude,
+      inclination_deg: inclinationValue,
+      raan_deg: Number.isFinite(sat.raan) ? sat.raan : Number.isFinite(sat.raan_deg) ? sat.raan_deg : null,
+      arg_perigee_deg: Number.isFinite(sat.arg_perigee_deg) ? sat.arg_perigee_deg : null,
+      mean_anomaly_deg: Number.isFinite(sat.mean_anomaly_deg) ? sat.mean_anomaly_deg : null,
+      orbital_period_min: null,
+      circular_velocity_km_s: velocityValue
+    }
+  }, [])
+
+  const runConflictAnalysis = useCallback(async (
+    {
+      satelliteIds = [],
+      horizonHours = 24,
+      screeningDistanceKm = 50,
+      probabilityThreshold = 1e-4,
+      requestedWindowStart,
+      requestedWindowEnd
+    },
+    contextLabel = 'existing',
+    { silentToast = false, suppressLoading = false } = {}
+  ) => {
+    if (!suppressLoading) {
+      setIsAnalyzing(true)
+    }
     setAnalysisError(null)
 
+    const requestBody = {
+      satellite_ids: satelliteIds,
+      horizon_hours: clampHorizonHours(horizonHours),
+      screening_distance_km: screeningDistanceKm,
+      probability_threshold: probabilityThreshold
+    }
+
     try {
-      const response = await api.post('/tle/analyze', analysisPayload)
-      const analysis = response.data
-      const hasConflict = Array.isArray(analysis.conflicts) && analysis.conflicts.length > 0
+      const analysis = await analyzeConjunctions(requestBody)
+
+      const normalizedConflicts = (analysis?.conjunctions ?? []).map((event) => ({
+        id: event.id,
+        name: `${event.satellite_a.name} · ${event.satellite_b.name}`,
+        norad_id: `${event.satellite_a.norad_id}/${event.satellite_b.norad_id}`,
+        miss_distance_km: event.dmin_km,
+        relative_speed_km_s: event.relative_velocity_km_s,
+        time_utc: event.tca,
+        probability: event.pc,
+        risk_level: event.risk_level,
+        satellite_a: event.satellite_a,
+        satellite_b: event.satellite_b
+      }))
+
+      const normalizedAnalysis = {
+        ...analysis,
+        horizon_hours: clampHorizonHours(horizonHours),
+        screening_distance_km: screeningDistanceKm,
+        probability_threshold: probabilityThreshold,
+        requested_window_start: requestedWindowStart ?? null,
+        requested_window_end: requestedWindowEnd ?? null,
+        recommended_window_start: requestedWindowStart ?? null,
+        recommended_window_end: requestedWindowEnd ?? null,
+        conflicts: normalizedConflicts
+      }
 
       setConflictCheck({
-        hasConflict,
-        analysis,
+        hasConflict: normalizedConflicts.length > 0,
+        analysis: normalizedAnalysis,
         context: contextLabel
       })
 
@@ -234,7 +390,7 @@ const BookingPage = () => {
         toast.success('Risk analysis completed with SGP4 propagation')
       }
 
-      return analysis
+      return normalizedAnalysis
     } catch (error) {
       console.error('Launch analysis failed', error)
       setAnalysisError('Unable to analyze launch window. Please try again.')
@@ -243,9 +399,137 @@ const BookingPage = () => {
       }
       throw error
     } finally {
-      setIsAnalyzing(false)
+      if (!suppressLoading) {
+        setIsAnalyzing(false)
+      }
     }
-  }
+  }, [analyzeConjunctions])
+
+  const performExistingAnalysis = useCallback(async ({
+    options,
+    primarySatellite,
+    primaryNoradId,
+    silentToast = true,
+    suppressLoading = false
+  }) => {
+    if (!options) return null
+    const targetSatellite = primarySatellite || selectedSatellite
+    if (!targetSatellite) return null
+
+    const runId = (existingAnalysisRunRef.current += 1)
+
+    if (suppressLoading) {
+      setIsAutoAnalyzingExisting(true)
+    }
+
+    try {
+      const analysis = await runConflictAnalysis(options, 'existing', {
+        silentToast,
+        suppressLoading
+      })
+
+      let mlRisk = null
+      try {
+        mlRisk = await predictRisk(
+          buildRiskRequestPayload({
+            primaryNoradId,
+            horizonHours: options.horizonHours,
+            screeningDistanceKm: options.screeningDistanceKm,
+            probabilityThreshold: options.probabilityThreshold
+          })
+        )
+      } catch (mlError) {
+        console.error('ML risk prediction failed', mlError)
+        if (!silentToast) {
+          toast.error('ML risk prediction failed')
+        }
+      }
+
+      const orbitSummary = summarizeSatelliteOrbit(targetSatellite)
+      const report = {
+        generatedAt: new Date().toISOString(),
+        satellite: {
+          id: targetSatellite.id,
+          name: targetSatellite.name,
+          norad_id: targetSatellite.norad_id ?? null
+        },
+        analysis,
+        mlModel: mlRisk,
+        orbit: orbitSummary
+      }
+
+      if (existingAnalysisRunRef.current === runId) {
+        setExistingMissionReport(report)
+      }
+
+      return report
+    } catch (error) {
+      if (suppressLoading) {
+        console.error('Existing mission analysis failed', error)
+        return null
+      }
+      throw error
+    } finally {
+      if (suppressLoading) {
+        setIsAutoAnalyzingExisting(false)
+      }
+    }
+  }, [buildRiskRequestPayload, predictRisk, runConflictAnalysis, summarizeSatelliteOrbit, selectedSatellite])
+
+  useEffect(() => {
+    if (plannerMode !== 'existing') {
+      if (existingAnalysisDebounceRef.current) {
+        clearTimeout(existingAnalysisDebounceRef.current)
+        existingAnalysisDebounceRef.current = null
+      }
+      return
+    }
+
+    if (!selectedSatellite || !watchedStartTime || !watchedEndTime) {
+      return
+    }
+
+    if (existingAnalysisDebounceRef.current) {
+      clearTimeout(existingAnalysisDebounceRef.current)
+    }
+
+    const horizonHours = clampHorizonHours((windowMinutes ?? 60) / 60)
+    const primaryNoradId = Number(selectedSatellite?.norad_id)
+    const options = buildConjunctionOptions({
+      primaryNoradId: Number.isFinite(primaryNoradId) ? primaryNoradId : undefined,
+      horizonHours,
+      screeningDistanceKm: 25,
+      probabilityThreshold: 5e-5,
+      requestedWindowStart: new Date(watchedStartTime).toISOString(),
+      requestedWindowEnd: new Date(watchedEndTime).toISOString()
+    })
+
+    existingAnalysisDebounceRef.current = setTimeout(() => {
+      performExistingAnalysis({
+        options,
+        primarySatellite: selectedSatellite,
+        primaryNoradId: Number.isFinite(primaryNoradId) ? primaryNoradId : undefined,
+        silentToast: true,
+        suppressLoading: true
+      })
+    }, 600)
+
+    return () => {
+      if (existingAnalysisDebounceRef.current) {
+        clearTimeout(existingAnalysisDebounceRef.current)
+        existingAnalysisDebounceRef.current = null
+      }
+    }
+  }, [
+    plannerMode,
+    selectedSatellite,
+    watchedStartTime,
+    watchedEndTime,
+    windowMinutes,
+    performExistingAnalysis,
+    buildConjunctionOptions,
+    clampHorizonHours
+  ])
 
   const handleNewMissionPlan = async (data) => {
     const perigee = Number(data.perigee_alt_km)
@@ -277,20 +561,40 @@ const BookingPage = () => {
         toast.error('Launch feasibility assessment failed')
       }
 
+      const windowStartIso = new Date(data.start_time).toISOString()
+      const windowEndIso = new Date(data.end_time).toISOString()
+      const windowHours = windowMinutes ? windowMinutes / 60 : 24
+      const horizonHours = clampHorizonHours(windowHours)
+
+      const conjunctionOptions = buildConjunctionOptions({
+        primaryNoradId: undefined,
+        horizonHours,
+        screeningDistanceKm: 50,
+        probabilityThreshold: 1e-5,
+        requestedWindowStart: windowStartIso,
+        requestedWindowEnd: windowEndIso
+      })
+
       const riskAnalysis = await runConflictAnalysis(
-        {
-          launch_vehicle: data.launch_vehicle_name || 'OrbitalOS Launcher',
-          launch_time: new Date(data.start_time).toISOString(),
-          desired_altitude_km: perigee,
-          desired_inclination_deg: inclination,
-          launch_site_lat_deg: data.launch_site_lat_deg ? Number(data.launch_site_lat_deg) : null,
-          launch_site_lon_deg: data.launch_site_lon_deg ? Number(data.launch_site_lon_deg) : null,
-          payload_mass_kg: data.payload_mass_kg ? Number(data.payload_mass_kg) : undefined,
-          window_minutes: windowMinutes ?? undefined
-        },
+        conjunctionOptions,
         'new',
         { silentToast: true }
       )
+
+      let mlRisk = null
+      try {
+        mlRisk = await predictRisk(
+          buildRiskRequestPayload({
+            primaryNoradId: undefined,
+            horizonHours,
+            screeningDistanceKm: conjunctionOptions.screeningDistanceKm,
+            probabilityThreshold: conjunctionOptions.probabilityThreshold
+          })
+        )
+      } catch (error) {
+        console.error('ML risk prediction failed', error)
+        toast.error('ML risk prediction failed')
+      }
 
       const effectiveApogee = Number.isFinite(apogee) ? apogee : perigee
       const meanAltitude = (perigee + effectiveApogee) / 2
@@ -316,7 +620,8 @@ const BookingPage = () => {
           circular_velocity_km_s: circularVelocity ? Number(circularVelocity.toFixed(3)) : null
         },
         feasibility: feasibilityAssessment || null,
-        risk: riskAnalysis || null
+        risk: riskAnalysis || null,
+        mlModel: mlRisk || null
       })
 
       toast.success('Orbit recommendation generated')
@@ -347,11 +652,35 @@ const BookingPage = () => {
         return
       }
 
+      const windowStartIso = new Date(data.start_time).toISOString()
+      const windowEndIso = new Date(data.end_time).toISOString()
+      const windowHours = windowMinutes ? windowMinutes / 60 : 24
+      const horizonHours = clampHorizonHours(windowHours)
+      const primaryNoradId = Number(sat.norad_id)
+
+      const conjunctionOptions = buildConjunctionOptions({
+        primaryNoradId: Number.isFinite(primaryNoradId) ? primaryNoradId : undefined,
+        horizonHours,
+        screeningDistanceKm: 25,
+        probabilityThreshold: 5e-5,
+        requestedWindowStart: windowStartIso,
+        requestedWindowEnd: windowEndIso
+      })
+
+      const analysisReport = await performExistingAnalysis({
+        options: conjunctionOptions,
+        primarySatellite: sat,
+        primaryNoradId: Number.isFinite(primaryNoradId) ? primaryNoradId : undefined,
+        silentToast: true,
+        suppressLoading: true
+      })
+
       const feasibilityPayload = buildFeasibilityPayload(data, sat, plannerMode, windowMinutes)
+      let feasibilityAssessment = null
 
       try {
         setFeasibilityPending(true)
-        const feasibilityAssessment = await assessLaunchFeasibility(feasibilityPayload)
+        feasibilityAssessment = await assessLaunchFeasibility(feasibilityPayload)
         setSafetyReport(feasibilityAssessment)
       } catch (error) {
         toast.error('Launch feasibility assessment failed')
@@ -398,9 +727,24 @@ const BookingPage = () => {
         }
       }
 
+      const orbitSummary = summarizeSatelliteOrbit(sat)
+
+      setExistingMissionReport((prev) => ({
+        ...(analysisReport ?? prev ?? {}),
+        generatedAt: new Date().toISOString(),
+        satellite: {
+          id: sat.id,
+          name: sat.name,
+          norad_id: sat.norad_id ?? null
+        },
+        analysis: analysisReport?.analysis ?? prev?.analysis ?? null,
+        mlModel: analysisReport?.mlModel ?? prev?.mlModel ?? null,
+        feasibility: feasibilityAssessment || result?.safety || prev?.feasibility || null,
+        orbit: orbitSummary
+      }))
+
       toast.success('Orbital reservation created successfully')
       reset()
-      setOrbitRecommendation(null)
     } catch (error) {
       console.error('Reservation failed:', error)
       toast.error('Failed to create orbital reservation')
@@ -424,16 +768,19 @@ const BookingPage = () => {
         return
       }
 
-      await runConflictAnalysis({
-        launch_vehicle: selectedSatellite?.name || 'Orbital launch',
-        launch_time: new Date(watchedStartTime).toISOString(),
-        desired_altitude_km: selectedSatellite?.altitude ?? 550,
-        desired_inclination_deg: selectedSatellite?.inclination ?? 53,
-        launch_site_lat_deg: null,
-        launch_site_lon_deg: null,
-        payload_mass_kg: undefined,
-        window_minutes: windowMinutes ?? undefined
-      }, 'existing')
+      const horizonHours = clampHorizonHours((windowMinutes ?? 60) / 60)
+
+      await runConflictAnalysis(
+        buildConjunctionOptions({
+          primaryNoradId: Number(selectedSatellite?.norad_id),
+          horizonHours,
+          screeningDistanceKm: 25,
+          probabilityThreshold: 5e-5,
+          requestedWindowStart: new Date(watchedStartTime).toISOString(),
+          requestedWindowEnd: new Date(watchedEndTime).toISOString()
+        }),
+        'existing'
+      )
 
       return
     }
@@ -447,34 +794,55 @@ const BookingPage = () => {
       return
     }
 
-    await runConflictAnalysis({
-      launch_vehicle: values.launch_vehicle_name || 'OrbitalOS Launcher',
-      launch_time: new Date(watchedStartTime).toISOString(),
-      desired_altitude_km: perigee,
-      desired_inclination_deg: inclination,
-      launch_site_lat_deg: values.launch_site_lat_deg ? Number(values.launch_site_lat_deg) : null,
-      launch_site_lon_deg: values.launch_site_lon_deg ? Number(values.launch_site_lon_deg) : null,
-      payload_mass_kg: values.payload_mass_kg ? Number(values.payload_mass_kg) : undefined,
-      window_minutes: windowMinutes ?? undefined
-    }, 'new')
+    const horizonHours = clampHorizonHours((windowMinutes ?? 60) / 60)
+
+    await runConflictAnalysis(
+      buildConjunctionOptions({
+        primaryNoradId: undefined,
+        horizonHours,
+        screeningDistanceKm: 50,
+        probabilityThreshold: 1e-5,
+        requestedWindowStart: new Date(watchedStartTime).toISOString(),
+        requestedWindowEnd: new Date(watchedEndTime).toISOString()
+      }),
+      'new'
+    )
   }
 
   return (
-    <div className="min-h-screen bg-gray-900">
-      <div className="bg-gray-800 border-b border-gray-700">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div>
-              <h1 className="text-2xl font-bold text-white">Booking Request</h1>
-              <p className="text-gray-400">Schedule satellite operations and maneuvers</p>
+    <div className="space-y-10 pb-16">
+      <motion.div
+        initial={{ opacity: 0, y: -12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, ease: 'easeOut' }}
+        className="glass-panel px-6 py-6 sm:px-8 lg:px-10"
+      >
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-[0.45em] text-white/60">Mission Scheduling</p>
+            <h1 className="mt-2 text-2xl font-semibold text-white sm:text-3xl">Booking Request</h1>
+            <p className="mt-2 max-w-2xl text-sm text-white/65">
+              Schedule satellite operations, coordinate launch windows, and run real-time risk analysis with shared analytics.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex flex-col text-right text-white/70">
+              <span className="text-xs uppercase tracking-[0.35em]">Active Reports</span>
+              <span className="text-lg font-semibold text-sky-300">
+                {existingMissionReport ? 'Updated' : 'Pending'}
+              </span>
+            </div>
+            <span className="hidden h-14 w-px rounded-full bg-white/10 md:block" />
+            <div className="rounded-2xl border border-white/10 bg-white/8 px-5 py-3 text-sm text-white/70 backdrop-blur-md">
+              <span className="block text-[10px] uppercase tracking-[0.45em] text-white/40">Auto Analysis</span>
+              <span>{isAutoAnalyzingExisting ? 'Running...' : 'Idle'}</span>
             </div>
           </div>
         </div>
-      </div>
+      </motion.div>
 
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2">
+    <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
+      <div className="lg:col-span-2 space-y-8">
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -487,10 +855,10 @@ const BookingPage = () => {
                   <label className="label">Mission Planning Mode</label>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <label
-                      className={`cursor-pointer rounded-xl border px-4 py-3 transition-colors ${
+                      className={`cursor-pointer rounded-2xl border px-4 py-3 transition-all ${
                         plannerMode === 'existing'
-                          ? 'border-blue-500 bg-blue-500/10'
-                          : 'border-white/10 hover:border-blue-400/60'
+                          ? 'border-sky-500/70 bg-sky-500/10 shadow-[0_18px_40px_-30px_rgba(56,189,248,0.8)]'
+                          : 'border-white/10 bg-white/4 hover:border-sky-400/60'
                       }`}
                     >
                       <input
@@ -501,16 +869,16 @@ const BookingPage = () => {
                       />
                       <div>
                         <p className="font-semibold text-white">Modify Existing Mission</p>
-                        <p className="text-sm text-gray-300">
+                        <p className="text-sm text-white/65">
                           Select an on-orbit asset to tweak timelines, windows, and maneuvers.
                         </p>
                       </div>
                     </label>
                     <label
-                      className={`cursor-pointer rounded-xl border px-4 py-3 transition-colors ${
+                      className={`cursor-pointer rounded-2xl border px-4 py-3 transition-all ${
                         plannerMode === 'new'
-                          ? 'border-purple-500 bg-purple-500/10'
-                          : 'border-white/10 hover:border-purple-400/60'
+                          ? 'border-purple-500/80 bg-purple-500/10 shadow-[0_18px_40px_-30px_rgba(192,132,252,0.8)]'
+                          : 'border-white/10 bg-white/4 hover:border-purple-400/60'
                       }`}
                     >
                       <input
@@ -521,7 +889,7 @@ const BookingPage = () => {
                       />
                       <div>
                         <p className="font-semibold text-white">Plan a New Mission</p>
-                        <p className="text-sm text-gray-300">
+                        <p className="text-sm text-white/65">
                           Provide orbital targets and let SGP4 recommend a safe corridor.
                         </p>
                       </div>
@@ -542,7 +910,7 @@ const BookingPage = () => {
                           ? { required: 'Please select a satellite' }
                           : {})
                       })}
-                      className="input disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed"
+                      className="input disabled:cursor-not-allowed disabled:bg-white/4 disabled:text-white/40"
                     >
                       <option value="">Choose a satellite...</option>
                       {satellites.map((satellite) => (
@@ -570,7 +938,7 @@ const BookingPage = () => {
                         ? { required: 'Please select operation type' }
                         : {})
                     })}
-                    className="input disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed"
+                    className="input disabled:cursor-not-allowed disabled:bg-white/4 disabled:text-white/40"
                   >
                     <option value="">Select operation...</option>
                     <option value="orbit_shift">Orbit Shift</option>
@@ -579,7 +947,7 @@ const BookingPage = () => {
                     <option value="maneuver">Maneuver</option>
                   </select>
                   {plannerMode === 'new' && (
-                    <p className="mt-1 text-xs text-gray-400">
+                    <p className="mt-1 text-xs text-white/50">
                       New mission planning defaults to the Launch Window workflow.
                     </p>
                   )}
@@ -609,20 +977,20 @@ const BookingPage = () => {
                   </div>
                 </div>
 
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-3 rounded-2xl border border-white/10 bg-white/4 px-4 py-3">
                   <input
                     id="rideshare"
                     type="checkbox"
                     {...register('is_rideshare')}
-                    className="h-4 w-4 rounded border-gray-600 bg-gray-800 text-blue-500 focus:ring-blue-400"
+                    className="h-4 w-4 rounded border-white/25 bg-white/10 text-sky-400 focus:ring-sky-400"
                   />
-                  <label htmlFor="rideshare" className="label text-sm font-normal text-gray-300">
+                  <label htmlFor="rideshare" className="label text-xs font-normal text-white/70">
                     This is a rideshare mission
                   </label>
                 </div>
 
                 {plannerMode === 'new' && (
-                  <div className="space-y-4 rounded-xl border border-purple-500/40 bg-purple-900/10 p-4">
+                  <div className="space-y-4 rounded-3xl border border-purple-400/30 bg-purple-500/10 p-6">
                     <div className="flex items-center justify-between">
                       <h3 className="text-sm font-semibold uppercase tracking-wide text-purple-200">
                         New Mission Orbital Targets
@@ -687,7 +1055,7 @@ const BookingPage = () => {
                           {...register('apogee_alt_km', { valueAsNumber: true })}
                           className="input"
                         />
-                        <p className="mt-1 text-xs text-gray-400">Leave blank for circular orbit.</p>
+                        <p className="mt-1 text-xs text-white/50">Leave blank for circular orbit.</p>
                       </div>
                       <div>
                         <label className="label">Inclination (deg)</label>
@@ -838,7 +1206,7 @@ const BookingPage = () => {
             </motion.div>
           </div>
 
-          <div className="space-y-6">
+          <div className="space-y-6 lg:col-span-1">
             {conflictCheck && conflictCheck.analysis && (
               <motion.div
                 initial={{ opacity: 0, scale: 0.95 }}
@@ -871,33 +1239,45 @@ const BookingPage = () => {
                 </div>
 
                 <div className="mt-4 space-y-3 text-sm text-gray-300">
-                  <div>
-                    <span className="font-medium text-white">Requested window:</span>
-                    <br />
-                    {formatTimestamp(conflictCheck.analysis?.requested_window_start)}
-                    {' — '}
-                    {formatTimestamp(conflictCheck.analysis?.requested_window_end)}
-                  </div>
-                  <div>
-                    <span className="font-medium text-white">Recommended window:</span>
-                    <br />
-                    {formatTimestamp(conflictCheck.analysis?.recommended_window_start)}
-                    {' — '}
-                    {formatTimestamp(conflictCheck.analysis?.recommended_window_end)}
-                  </div>
-                  {conflictCheck.analysis?.suggested_orbit && (
+                  {conflictCheck.analysis?.requested_window_start && (
                     <div>
-                      <span className="font-medium text-white">Suggested orbit:</span>
+                      <span className="font-medium text-white">Requested window:</span>
                       <br />
-                      {formatNumber(conflictCheck.analysis.suggested_orbit.altitude_km, 1)} km @{' '}
-                      {formatNumber(conflictCheck.analysis.suggested_orbit.inclination_deg, 2)}°
-                      {conflictCheck.analysis.suggested_orbit.notes && (
-                        <p className="text-xs text-gray-400 mt-1">
-                          {conflictCheck.analysis.suggested_orbit.notes}
-                        </p>
-                      )}
+                      {formatTimestamp(conflictCheck.analysis?.requested_window_start)}
+                      {' — '}
+                      {formatTimestamp(conflictCheck.analysis?.requested_window_end)}
                     </div>
                   )}
+
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div className="rounded-lg border border-white/10 bg-black/30 p-3">
+                      <span className="text-gray-400 block text-[11px] uppercase tracking-wide">Horizon</span>
+                      <span className="text-sm font-semibold text-white">
+                        {conflictCheck.analysis?.horizon_hours ?? '—'} h
+                      </span>
+                    </div>
+                    <div className="rounded-lg border border-white/10 bg-black/30 p-3">
+                      <span className="text-gray-400 block text-[11px] uppercase tracking-wide">Screening Distance</span>
+                      <span className="text-sm font-semibold text-white">
+                        {formatNumber(conflictCheck.analysis?.screening_distance_km, 1)} km
+                      </span>
+                    </div>
+                    <div className="rounded-lg border border-white/10 bg-black/30 p-3">
+                      <span className="text-gray-400 block text-[11px] uppercase tracking-wide">Probability Threshold</span>
+                      <span className="text-sm font-semibold text-white">
+                        {formatNumber(conflictCheck.analysis?.probability_threshold, 6)}
+                      </span>
+                    </div>
+                    <div className="rounded-lg border border-white/10 bg-black/30 p-3">
+                      <span className="text-gray-400 block text-[11px] uppercase tracking-wide">Conjunctions Found</span>
+                      <span className="text-sm font-semibold text-white">
+                        {conflictCheck.analysis?.conjunctions_found ?? 0}{' '}
+                        <span className="text-xs text-gray-400">
+                          / {conflictCheck.analysis?.candidate_pairs ?? 0} pairs
+                        </span>
+                      </span>
+                    </div>
+                  </div>
 
                   {(conflictCheck.analysis?.conflicts?.length ?? 0) > 0 && (
                     <div className="space-y-2">
@@ -907,7 +1287,7 @@ const BookingPage = () => {
                       <div className="space-y-2">
                         {conflictCheck.analysis?.conflicts?.slice(0, 3).map((conflict) => (
                           <div
-                            key={`${conflict.norad_id}-${conflict.time_utc}`}
+                            key={conflict.id}
                             className="rounded-lg border border-white/10 bg-black/40 p-3"
                           >
                             <div className="flex items-center justify-between text-xs text-gray-300">
@@ -915,7 +1295,7 @@ const BookingPage = () => {
                               <span>{formatNumber(conflict.miss_distance_km, 2)} km miss</span>
                             </div>
                             <div className="mt-1 text-[11px] text-gray-400">
-                              {formatTimestamp(conflict.time_utc)} · {formatNumber(conflict.relative_speed_km_s, 2)} km/s
+                              {formatTimestamp(conflict.time_utc)} · {formatNumber(conflict.relative_speed_km_s, 2)} km/s · Pc {formatNumber(conflict.probability, 6)}
                             </div>
                           </div>
                         ))}
@@ -941,6 +1321,199 @@ const BookingPage = () => {
               <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-100">
                 {recommendationError}
               </div>
+            )}
+
+            {existingMissionReport && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="card border border-blue-500/40 bg-blue-900/10"
+              >
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <h3 className="font-semibold text-white">Existing Mission Insights</h3>
+                    <p className="text-xs text-gray-300">
+                      {existingMissionReport.generatedAt
+                        ? `Refreshed ${formatTimestamp(existingMissionReport.generatedAt)}`
+                        : 'Latest analytics summary'}
+                    </p>
+                  </div>
+                  {existingMissionReport.satellite?.name && (
+                    <div className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-right text-xs text-gray-300">
+                      <span className="block text-[10px] uppercase tracking-wide text-gray-400">Asset</span>
+                      <span className="text-sm font-semibold text-white">
+                        {existingMissionReport.satellite?.name}
+                      </span>
+                      {existingMissionReport.satellite?.norad_id && (
+                        <span className="block text-[10px] text-gray-400">
+                          NORAD {existingMissionReport.satellite?.norad_id}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-4 space-y-4 text-sm text-gray-200">
+                  {existingMissionReport.orbit && (
+                    <div>
+                      <span className="text-xs uppercase tracking-wide text-blue-200">Current Orbit</span>
+                      <div className="mt-2 grid grid-cols-2 gap-3 text-xs">
+                        <div className="rounded-lg border border-white/10 bg-black/30 p-3">
+                          <span className="text-gray-400 block text-[11px] uppercase tracking-wide">Altitude</span>
+                          <span className="text-sm font-semibold text-white">
+                            {formatNumber(existingMissionReport.orbit.mean_altitude_km, 2)} km
+                          </span>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-black/30 p-3">
+                          <span className="text-gray-400 block text-[11px] uppercase tracking-wide">Inclination</span>
+                          <span className="text-sm font-semibold text-white">
+                            {formatNumber(existingMissionReport.orbit.inclination_deg, 2)}°
+                          </span>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-black/30 p-3">
+                          <span className="text-gray-400 block text-[11px] uppercase tracking-wide">Mean Motion</span>
+                          <span className="text-sm font-semibold text-white">
+                            {existingMissionReport.orbit.mean_motion_rev_day != null
+                              ? `${formatNumber(existingMissionReport.orbit.mean_motion_rev_day, 4)} rev/day`
+                              : '—'}
+                          </span>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-black/30 p-3">
+                          <span className="text-gray-400 block text-[11px] uppercase tracking-wide">Eccentricity</span>
+                          <span className="text-sm font-semibold text-white">
+                            {existingMissionReport.orbit.eccentricity != null
+                              ? formatNumber(existingMissionReport.orbit.eccentricity, 6)
+                              : '—'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {existingMissionReport.analysis && (
+                    <div className="space-y-2 text-xs text-gray-300">
+                      <div className="flex items-center justify-between">
+                        <span className="text-blue-200 uppercase tracking-wide text-[11px]">Conflict Analysis</span>
+                        <span className="text-sm font-semibold text-white">
+                          {existingMissionReport.analysis?.conjunctions_found ?? existingMissionReport.analysis?.conflicts?.length ?? 0} conjunctions
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="rounded-lg border border-white/10 bg-black/40 p-3">
+                          <span className="block text-[10px] uppercase tracking-wide text-gray-400">Horizon</span>
+                          <span className="text-sm font-semibold text-white">
+                            {existingMissionReport.analysis?.horizon_hours ?? '—'} h
+                          </span>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-black/40 p-3">
+                          <span className="block text-[10px] uppercase tracking-wide text-gray-400">Screening Distance</span>
+                          <span className="text-sm font-semibold text-white">
+                            {formatNumber(existingMissionReport.analysis?.screening_distance_km, 1)} km
+                          </span>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-black/40 p-3">
+                          <span className="block text-[10px] uppercase tracking-wide text-gray-400">Probability Threshold</span>
+                          <span className="text-sm font-semibold text-white">
+                            {formatNumber(existingMissionReport.analysis?.probability_threshold, 6)}
+                          </span>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-black/40 p-3">
+                          <span className="block text-[10px] uppercase tracking-wide text-gray-400">Candidate Pairs</span>
+                          <span className="text-sm font-semibold text-white">
+                            {existingMissionReport.analysis?.candidate_pairs ?? 0}
+                          </span>
+                        </div>
+                      </div>
+
+                      {existingMissionReport.analysis?.conflicts?.length > 0 && (
+                        <div className="rounded-lg border border-white/10 bg-black/40 p-3 space-y-2">
+                          <span className="font-medium text-white block">
+                            Highest priority conflicts ({existingMissionReport.analysis?.conflicts?.length ?? 0})
+                          </span>
+                          {existingMissionReport.analysis?.conflicts?.slice(0, 3).map((conflict) => (
+                            <div key={conflict.id} className="flex items-center justify-between text-[11px] text-gray-300">
+                              <span className="truncate pr-2" title={conflict.name}>{conflict.name}</span>
+                              <span>
+                                {formatNumber(conflict.miss_distance_km, 2)} km · Pc {formatNumber(conflict.probability, 6)}
+                              </span>
+                            </div>
+                          ))}
+                          {(existingMissionReport.analysis?.conflicts?.length ?? 0) > 3 && (
+                            <p className="text-[10px] text-gray-500">
+                              +{(existingMissionReport.analysis?.conflicts?.length ?? 0) - 3} additional conflicts
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {existingMissionReport.mlModel && (
+                    <div className="rounded-lg border border-white/10 bg-black/40 p-3 text-xs text-gray-300">
+                      <span className="font-semibold text-white block mb-2">ML Risk Model Insights</span>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <span className="block text-[10px] uppercase tracking-wide text-gray-400">Max Probability</span>
+                          <span className="text-sm font-semibold text-white">
+                            {formatNumber(existingMissionReport.mlModel.summary?.max_probability, 6)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="block text-[10px] uppercase tracking-wide text-gray-400">Average Probability</span>
+                          <span className="text-sm font-semibold text-white">
+                            {formatNumber(existingMissionReport.mlModel.summary?.average_probability, 6)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="block text-[10px] uppercase tracking-wide text-gray-400">Dangerous Conjunctions</span>
+                          <span className="text-sm font-semibold text-white">
+                            {existingMissionReport.mlModel.dangerous_conjunctions ?? 0}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="block text-[10px] uppercase tracking-wide text-gray-400">Evaluated Pairs</span>
+                          <span className="text-sm font-semibold text-white">
+                            {existingMissionReport.mlModel.conjunctions_evaluated ?? 0}
+                          </span>
+                        </div>
+                      </div>
+
+                      {existingMissionReport.mlModel.events?.length > 0 && (
+                        <div className="mt-3 space-y-2">
+                          <span className="font-medium text-white block">Top ML Signals</span>
+                          {existingMissionReport.mlModel.events.slice(0, 3).map((event) => (
+                            <div key={event.pair_id} className="rounded border border-white/10 bg-black/30 p-2">
+                              <div className="flex items-center justify-between text-[11px] text-gray-300">
+                                <span>{event.satellites?.join(' & ') || event.pair_id}</span>
+                                <span className="text-xs text-blue-300 font-semibold">{event.risk_level}</span>
+                              </div>
+                              <div className="mt-1 text-[10px] text-gray-400">
+                                Pc {formatNumber(event.raw_probability, 6)} · Logistic {formatNumber(event.logistic_probability, 6)} · d<sub>min</sub> {formatNumber(event.min_distance_km, 2)} km
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {existingMissionReport.feasibility && (
+                    <div className="rounded-lg border border-white/10 bg-black/40 p-3 text-xs text-gray-300">
+                      <span className="font-semibold text-white block mb-1">Feasibility Snapshot</span>
+                      <div>Conflicts: {existingMissionReport.feasibility.summary?.conflicts_found ?? 0}</div>
+                      <div>
+                        Peak Risk Score:{' '}
+                        {(existingMissionReport.feasibility.summary?.total_risk_score ?? 0).toFixed(2)}
+                      </div>
+                      <div>
+                        Safe to launch:{' '}
+                        {existingMissionReport.feasibility.safe_to_launch ? 'Yes' : 'No'}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
             )}
 
             {orbitRecommendation && (
@@ -1006,12 +1579,32 @@ const BookingPage = () => {
                   </div>
 
                   {orbitRecommendation.risk && (
-                    <div className="space-y-1 text-xs text-gray-300">
-                      <span className="font-medium text-white">Suggested launch window:</span>
-                      <div>
-                        {formatTimestamp(orbitRecommendation.risk.recommended_window_start)} {' — '}
-                        {formatTimestamp(orbitRecommendation.risk.recommended_window_end)}
+                    <div className="space-y-2 text-xs text-gray-300">
+                      {orbitRecommendation.risk.recommended_window_start && (
+                        <div>
+                          <span className="font-medium text-white">Recommended launch window:</span>
+                          <div>
+                            {formatTimestamp(orbitRecommendation.risk.recommended_window_start)} {' — '}
+                            {formatTimestamp(orbitRecommendation.risk.recommended_window_end)}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="rounded-lg border border-white/10 bg-black/40 p-3">
+                          <span className="text-gray-400 block text-[10px] uppercase tracking-wide">Horizon</span>
+                          <span className="text-sm font-semibold text-white">
+                            {orbitRecommendation.risk.horizon_hours ?? '—'} h
+                          </span>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-black/40 p-3">
+                          <span className="text-gray-400 block text-[10px] uppercase tracking-wide">Screening Distance</span>
+                          <span className="text-sm font-semibold text-white">
+                            {formatNumber(orbitRecommendation.risk.screening_distance_km, 1)} km
+                          </span>
+                        </div>
                       </div>
+
                       {orbitRecommendation.risk.conflicts?.length > 0 && (
                         <div className="rounded-lg border border-white/10 bg-black/40 p-3">
                           <span className="font-medium text-white block mb-2">
@@ -1019,12 +1612,63 @@ const BookingPage = () => {
                           </span>
                           <div className="space-y-1">
                             {orbitRecommendation.risk.conflicts.slice(0, 2).map((conflict) => (
-                              <div key={`${conflict.norad_id}-${conflict.time_utc}`} className="flex justify-between text-[11px] text-gray-300">
+                              <div key={conflict.id} className="flex justify-between text-[11px] text-gray-300">
                                 <span>{conflict.name}</span>
-                                <span>{conflict.miss_distance_km.toFixed(2)} km</span>
+                                <span>
+                                  {formatNumber(conflict.miss_distance_km, 2)} km · Pc {formatNumber(conflict.probability, 6)}
+                                </span>
                               </div>
                             ))}
                           </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {orbitRecommendation.mlModel && (
+                    <div className="rounded-lg border border-white/10 bg-black/40 p-3 text-xs text-gray-300">
+                      <span className="font-semibold text-white block mb-2">ML Risk Model Insights</span>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <span className="text-gray-400 block text-[10px] uppercase tracking-wide">Max Probability</span>
+                          <span className="text-sm font-semibold text-white">
+                            {formatNumber(orbitRecommendation.mlModel.summary?.max_probability, 6)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-gray-400 block text-[10px] uppercase tracking-wide">Average Probability</span>
+                          <span className="text-sm font-semibold text-white">
+                            {formatNumber(orbitRecommendation.mlModel.summary?.average_probability, 6)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-gray-400 block text-[10px] uppercase tracking-wide">Dangerous Conjunctions</span>
+                          <span className="text-sm font-semibold text-white">
+                            {orbitRecommendation.mlModel.dangerous_conjunctions ?? 0}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-gray-400 block text-[10px] uppercase tracking-wide">Evaluated Pairs</span>
+                          <span className="text-sm font-semibold text-white">
+                            {orbitRecommendation.mlModel.conjunctions_evaluated ?? 0}
+                          </span>
+                        </div>
+                      </div>
+
+                      {orbitRecommendation.mlModel.events?.length > 0 && (
+                        <div className="mt-3 space-y-2">
+                          <span className="font-medium text-white block">Top ML Signals</span>
+                          {orbitRecommendation.mlModel.events.slice(0, 2).map((event) => (
+                            <div key={event.pair_id} className="rounded border border-white/10 bg-black/30 p-2">
+                              <div className="flex items-center justify-between text-[11px] text-gray-300">
+                                <span>{event.satellites?.join(' & ') || event.pair_id}</span>
+                                <span className="text-xs text-purple-300 font-semibold">{event.risk_level}</span>
+                              </div>
+                              <div className="mt-1 text-[10px] text-gray-400">
+                                Pc {formatNumber(event.raw_probability, 6)} · Logistic {formatNumber(event.logistic_probability, 6)} · d<sub>min</sub> {formatNumber(event.min_distance_km, 2)} km
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       )}
                     </div>
@@ -1170,7 +1814,6 @@ const BookingPage = () => {
             </motion.div>
           </div>
         </div>
-      </div>
     </div>
   )
 }

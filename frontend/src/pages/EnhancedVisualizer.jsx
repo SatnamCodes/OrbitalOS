@@ -1,11 +1,10 @@
-import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { Viewer, Entity, PointGraphics, LabelGraphics, PolylineGraphics } from 'resium'
 import * as Cesium from 'cesium'
 import { useEnhancedSatellitesStore } from '../stores/enhancedStores'
 import { Clock, Satellite, Activity, AlertTriangle } from 'lucide-react'
 import toast from 'react-hot-toast'
 
-const EARTH_RADIUS_KM = 6378.137
 const VISUALIZATION_LIMIT = 150 // Limit for performance
 
 const EnhancedVisualizer = () => {
@@ -176,92 +175,167 @@ const EnhancedVisualizer = () => {
     return () => clearInterval(interval)
   }, [loadVisualizationData, isLoadingRealTime])
 
+  const formattedLastUpdated = lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : '—'
+  const combinedLoading = isLoadingRealTime || isLoading
+
   return (
-    <div className="h-screen w-full relative bg-black">
+    <div className="relative h-screen w-full overflow-hidden text-white">
+      <div className="absolute inset-0 -z-[30] bg-[#01010a]" />
+      <div className="absolute inset-0 -z-[20] bg-[radial-gradient(circle_at_top,_rgba(79,70,229,0.2),_transparent_65%)] pointer-events-none" />
+      <div className="absolute inset-0 -z-[10] bg-[radial-gradient(circle_at_bottom,_rgba(14,165,233,0.18),_transparent_60%)] pointer-events-none" />
+
       {/* Header Stats */}
-      <div className="absolute top-4 left-4 z-10 bg-black/80 backdrop-blur-sm rounded-lg p-4 text-white">
-        <div className="flex items-center gap-4 text-sm">
-          <div className="flex items-center gap-2">
-            <Satellite className="w-4 h-4" />
-            <span>Total: {satellites.length.toLocaleString()}</span>
+      <div className="glass-panel absolute top-6 left-6 z-10 w-[420px] p-6 text-white/90">
+        <div className="relative z-10 space-y-5">
+          <div>
+            <h2 className="text-lg font-semibold tracking-tight">Orbital snapshot</h2>
+            <p className="mt-1 text-sm text-white/60">
+              Monitor the live catalog and currently rendered satellites in this scene.
+            </p>
           </div>
-          <div className="flex items-center gap-2">
-            <Activity className="w-4 h-4" />
-            <span>Showing: {realTimeSatellites.length}</span>
-          </div>
-          {lastUpdated && (
-            <div className="flex items-center gap-2">
-              <Clock className="w-4 h-4" />
-              <span>Updated: {new Date(lastUpdated).toLocaleTimeString()}</span>
+
+          <div className="grid grid-cols-2 gap-3 text-sm text-white/80">
+            <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+              <p className="text-xs uppercase tracking-[0.28em] text-white/40">Catalogued</p>
+              <div className="mt-2 flex items-center gap-2 text-lg font-semibold text-white/90">
+                <Satellite className="h-4 w-4 text-sky-300" />
+                <span>{satellites.length.toLocaleString()}</span>
+              </div>
             </div>
-          )}
-          {isLoadingRealTime && (
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              <span>Loading...</span>
+            <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+              <p className="text-xs uppercase tracking-[0.28em] text-white/40">In view</p>
+              <div className="mt-2 flex items-center gap-2 text-lg font-semibold text-white/90">
+                <Activity className="h-4 w-4 text-emerald-300" />
+                <span>{realTimeSatellites.length}</span>
+              </div>
+            </div>
+            <div className="col-span-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+              <p className="text-xs uppercase tracking-[0.28em] text-white/40">Last sync</p>
+              <div className="mt-2 flex items-center justify-between text-sm font-medium text-white/80">
+                <div className="flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-indigo-300" />
+                  <span>{formattedLastUpdated}</span>
+                </div>
+                {combinedLoading && (
+                  <span className="flex items-center gap-2 text-xs uppercase tracking-[0.24em] text-white/60">
+                    <span className="h-2.5 w-2.5 rounded-full bg-amber-400 animate-ping" />
+                    syncing
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {error && (
+            <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">
+              <div className="flex items-center gap-2 font-medium">
+                <AlertTriangle className="h-4 w-4" />
+                {error}
+              </div>
             </div>
           )}
         </div>
-        
-        {error && (
-          <div className="flex items-center gap-2 text-red-400 mt-2">
-            <AlertTriangle className="w-4 h-4" />
-            <span className="text-xs">{error}</span>
-          </div>
-        )}
       </div>
 
       {/* Satellite Info Panel */}
       {selectedSatellite && (
-        <div className="absolute top-4 right-4 z-10 bg-black/80 backdrop-blur-sm rounded-lg p-4 text-white min-w-64">
-          <h3 className="font-bold text-lg mb-2">{selectedSatellite.satname}</h3>
-          <div className="space-y-1 text-sm">
-            <div>NORAD ID: {selectedSatellite.satid}</div>
-            <div>Type: {selectedSatellite.type}</div>
-            <div>Altitude: {selectedSatellite.satalt?.toFixed(1)} km</div>
-            <div>Latitude: {selectedSatellite.satlat?.toFixed(3)}°</div>
-            <div>Longitude: {selectedSatellite.satlng?.toFixed(3)}°</div>
-            {selectedSatellite.velocity && (
-              <div>Velocity: {selectedSatellite.velocity?.toFixed(2)} km/s</div>
-            )}
-            <div className="text-xs text-gray-400 mt-2">Source: {selectedSatellite.source}</div>
+        <div className="glass-panel absolute top-6 right-6 z-10 w-80 p-6 text-white/90">
+          <div className="relative z-10 space-y-4">
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 className="text-lg font-semibold">{selectedSatellite.satname}</h3>
+                <p className="text-xs uppercase tracking-[0.3em] text-white/40">NORAD {selectedSatellite.satid}</p>
+              </div>
+              <button
+                onClick={() => setSelectedSatellite(null)}
+                className="flex h-8 w-8 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white/60 transition hover:border-white/40 hover:bg-white/20 hover:text-white"
+                aria-label="Close satellite details"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 text-sm text-white/80">
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <p className="text-xs uppercase tracking-[0.28em] text-white/40">Type</p>
+                <p className="mt-2 capitalize text-white/90">{selectedSatellite.type || 'unknown'}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <p className="text-xs uppercase tracking-[0.28em] text-white/40">Altitude</p>
+                <p className="mt-2 font-mono text-white/90">{selectedSatellite.satalt?.toFixed(1)} km</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
+                  <p className="text-xs uppercase tracking-[0.28em] text-white/40">Latitude</p>
+                  <p className="mt-2 font-mono text-white/90">{selectedSatellite.satlat?.toFixed(3)}°</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
+                  <p className="text-xs uppercase tracking-[0.28em] text-white/40">Longitude</p>
+                  <p className="mt-2 font-mono text-white/90">{selectedSatellite.satlng?.toFixed(3)}°</p>
+                </div>
+              </div>
+              {selectedSatellite.velocity && (
+                <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                  <p className="text-xs uppercase tracking-[0.28em] text-white/40">Velocity</p>
+                  <p className="mt-2 font-mono text-white/90">{selectedSatellite.velocity?.toFixed(2)} km/s</p>
+                </div>
+              )}
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-xs text-white/60">
+                <span className="uppercase tracking-[0.28em] text-white/40">Source</span>
+                <p className="mt-2 font-medium text-white/80">{selectedSatellite.source}</p>
+              </div>
+            </div>
           </div>
-          <button
-            onClick={() => setSelectedSatellite(null)}
-            className="mt-3 px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-xs"
-          >
-            Close
-          </button>
         </div>
       )}
 
       {/* Legend */}
-      <div className="absolute bottom-4 left-4 z-10 bg-black/80 backdrop-blur-sm rounded-lg p-4 text-white">
-        <h4 className="font-bold mb-2 text-sm">Satellite Types</h4>
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 bg-cyan-400 rounded-full"></div>
-            <span>Communication</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 bg-green-400 rounded-full"></div>
-            <span>Navigation</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 bg-yellow-400 rounded-full"></div>
-            <span>Space Station</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 bg-orange-400 rounded-full"></div>
-            <span>Weather</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 bg-blue-400 rounded-full"></div>
-            <span>Earth Observation</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 bg-purple-400 rounded-full"></div>
-            <span>Scientific</span>
+      <div className="glass-panel absolute bottom-6 left-6 z-10 w-72 p-6 text-white/80">
+        <div className="relative z-10">
+          <h4 className="text-xs font-semibold uppercase tracking-[0.4em] text-white/50">Legend</h4>
+          <div className="mt-4 space-y-3 text-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="h-3 w-3 rounded-full bg-cyan-400" />
+                <span>Communication</span>
+              </div>
+              <span className="text-white/40">Freq relay</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="h-3 w-3 rounded-full bg-green-400" />
+                <span>Navigation</span>
+              </div>
+              <span className="text-white/40">GNSS</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="h-3 w-3 rounded-full bg-yellow-400" />
+                <span>Space station</span>
+              </div>
+              <span className="text-white/40">Habitats</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="h-3 w-3 rounded-full bg-orange-400" />
+                <span>Weather</span>
+              </div>
+              <span className="text-white/40">Climate</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="h-3 w-3 rounded-full bg-blue-400" />
+                <span>Earth observation</span>
+              </div>
+              <span className="text-white/40">Imagery</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="h-3 w-3 rounded-full bg-purple-400" />
+                <span>Scientific</span>
+              </div>
+              <span className="text-white/40">Research</span>
+            </div>
           </div>
         </div>
       </div>

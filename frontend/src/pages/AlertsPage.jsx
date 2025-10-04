@@ -45,30 +45,39 @@ const AlertsPage = () => {
   const readAlerts = alerts.filter(alert => alert.is_acknowledged)
 
   return (
-    <div className="min-h-screen bg-gray-900">
-      {/* Header */}
-      <div className="bg-gray-800 border-b border-gray-700">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div>
-              <h1 className="text-2xl font-bold text-white">Alerts & Notifications</h1>
-              <p className="text-gray-400">Monitor system alerts and operational notifications</p>
+    <div className="space-y-10 pb-16">
+      <motion.div
+        initial={{ opacity: 0, y: -12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, ease: 'easeOut' }}
+        className="glass-panel px-6 py-6 sm:px-8 lg:px-10"
+      >
+        <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-[0.45em] text-white/60">Orbital safety feed</p>
+            <h1 className="mt-2 text-2xl font-semibold text-white sm:text-3xl">Alerts & Notifications</h1>
+            <p className="mt-2 max-w-2xl text-sm text-white/65">
+              Monitor automated alerts, mitigation recommendations, and acknowledgement history across your constellation.
+            </p>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="rounded-2xl border border-white/10 bg-white/8 px-5 py-3 text-sm text-white/70 backdrop-blur-md">
+              <span className="block text-[10px] uppercase tracking-[0.45em] text-white/40">Unread Alerts</span>
+              <span className="text-lg font-semibold text-rose-300">{unreadAlerts.length}</span>
             </div>
-            <div className="flex items-center space-x-4">
-              <div className="text-right">
-                <p className="text-sm text-gray-400">Unread Alerts</p>
-                <p className="text-xl font-bold text-red-400">{unreadAlerts.length}</p>
-              </div>
+            <div className="rounded-2xl border border-white/10 bg-white/8 px-5 py-3 text-sm text-white/70 backdrop-blur-md">
+              <span className="block text-[10px] uppercase tracking-[0.45em] text-white/40">Total Alerts</span>
+              <span className="text-lg font-semibold text-sky-300">{alerts.length}</span>
             </div>
           </div>
         </div>
-      </div>
+      </motion.div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="mx-auto flex max-w-6xl flex-col gap-10 px-4 sm:px-6 lg:px-0">
         {/* Unread Alerts */}
         {unreadAlerts.length > 0 && (
-          <div className="mb-8">
-            <h2 className="text-lg font-semibold text-white mb-4">Unread Alerts</h2>
+          <div className="space-y-4">
+            <h2 className="text-sm uppercase tracking-[0.35em] text-white/60">Unread Alerts</h2>
             <div className="space-y-4">
               {unreadAlerts.map((alert, index) => (
                 <motion.div
@@ -76,7 +85,7 @@ const AlertsPage = () => {
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: index * 0.1 }}
-                  className={`card border-l-4 ${getSeverityColor(alert.severity)}`}
+                  className={`card border border-white/10 ${getSeverityColor(alert.severity)} shadow-[0_24px_72px_-36px_rgba(244,114,182,0.65)]`}
                 >
                   <div className="flex items-start justify-between">
                     <div className="flex items-start space-x-4">
@@ -97,7 +106,7 @@ const AlertsPage = () => {
                     </div>
                     <button
                       onClick={() => handleAcknowledge(alert.id)}
-                      className="btn btn-secondary text-sm px-4 py-2"
+                      className="btn btn-secondary text-xs uppercase tracking-[0.3em]"
                     >
                       Acknowledge
                     </button>
@@ -110,7 +119,7 @@ const AlertsPage = () => {
 
         {/* Read Alerts */}
         <div>
-          <h2 className="text-lg font-semibold text-white mb-4">Recent Alerts</h2>
+          <h2 className="text-sm uppercase tracking-[0.35em] text-white/60 mb-4">Recent Alerts</h2>
           {readAlerts.length > 0 ? (
             <div className="space-y-3">
               {readAlerts.slice(0, 10).map((alert, index) => (
@@ -119,7 +128,7 @@ const AlertsPage = () => {
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: index * 0.05 }}
-                  className="card opacity-75 hover:opacity-100 transition-opacity"
+                  className="card border border-white/10 opacity-75 hover:opacity-100 transition-opacity"
                 >
                   <div className="flex items-start space-x-4">
                     <div className="mt-1">

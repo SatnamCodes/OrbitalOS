@@ -23,6 +23,11 @@ export default {
           900: '#111827',
         },
       },
+      opacity: {
+        4: '0.04',
+        15: '0.15',
+        65: '0.65',
+      },
       animation: {
         'fade-in': 'fadeIn 0.5s ease-in-out',
         'slide-up': 'slideUp 0.3s ease-out',

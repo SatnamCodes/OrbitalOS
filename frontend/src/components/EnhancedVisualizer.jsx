@@ -3,14 +3,13 @@ import { useEnhancedSatellitesStore } from '../stores/enhancedStores'
 import { Viewer, Entity, PolylineGraphics } from 'resium'
 import * as Cesium from 'cesium'
 import { motion } from 'framer-motion'
-import { 
-  Play, 
-  Pause, 
-  RotateCcw, 
+import {
+  Play,
+  Pause,
+  RotateCcw,
   Layers,
   RefreshCw,
   Satellite,
-  Globe as GlobeIcon,
   Settings
 } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -42,6 +41,11 @@ const EnhancedVisualizer = () => {
       loadSatellites()
     }
   }, [satellites.length, loadSatellites])
+
+  useEffect(() => {
+    const interval = setInterval(() => setCurrentTime(new Date()), 1000)
+    return () => clearInterval(interval)
+  }, [])
 
   // Get visualization data (limited for performance)
   const visualizationData = satellites
@@ -193,196 +197,213 @@ const EnhancedVisualizer = () => {
   }
 
   return (
-    <div className="h-screen w-full bg-black relative overflow-hidden">
-      {/* Enhanced Controls */}
-      <div className="absolute top-4 left-4 z-50 space-y-4">
-        {/* Stats Card */}
-        <motion.div 
-          initial={{ opacity: 0, x: -20 }}
+    <div className="relative h-screen w-full overflow-hidden text-white">
+      <div className="absolute inset-0 -z-[30] bg-[#01010a]" />
+      <div className="absolute inset-0 -z-[20] bg-[radial-gradient(circle_at_top,_rgba(79,70,229,0.24),_transparent_65%)] pointer-events-none" />
+      <div className="absolute inset-0 -z-[10] bg-[radial-gradient(circle_at_bottom,_rgba(14,165,233,0.2),_transparent_60%)] pointer-events-none" />
+
+      <div className="absolute top-6 left-6 z-30 grid w-[460px] gap-4">
+        <motion.div
+          initial={{ opacity: 0, x: -40 }}
           animate={{ opacity: 1, x: 0 }}
-          className="bg-slate-900/90 backdrop-blur-xl rounded-xl p-4 border border-slate-700/50"
+          className="glass-panel px-6 py-5 text-white/90"
         >
-          <div className="flex items-center gap-2 mb-2">
-            <Satellite className="w-5 h-5 text-blue-400" />
-            <span className="text-white font-semibold">Enhanced Satellite Tracking</span>
-          </div>
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <div className="text-gray-400">Total Available</div>
-              <div className="text-blue-400 font-bold">{satellites.length.toLocaleString()}</div>
+          <div className="relative z-10 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold tracking-tight">Enhanced satellite tracking</h2>
+                <p className="text-sm text-white/60">Visualize our curated catalog with cinematic clarity.</p>
+              </div>
+              <span className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs uppercase tracking-[0.32em] text-white/50">
+                live
+              </span>
             </div>
-            <div>
-              <div className="text-gray-400">Visualizing</div>
-              <div className="text-green-400 font-bold">{visualizationData.length}</div>
+
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <p className="text-xs uppercase tracking-[0.28em] text-white/40">Catalog</p>
+                <div className="mt-2 flex items-end gap-2 text-2xl font-semibold text-white/90">
+                  <Satellite className="h-4 w-4 text-sky-300" />
+                  <span>{satellites.length.toLocaleString()}</span>
+                </div>
+                <p className="mt-2 text-xs text-white/40">Updated at {currentTime.toLocaleTimeString()}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <p className="text-xs uppercase tracking-[0.28em] text-white/40">Rendered</p>
+                <div className="mt-2 text-2xl font-semibold text-white/90">{visualizationData.length}</div>
+                <p className="mt-2 text-xs text-white/40">Tailored for performance</p>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+              <p className="text-xs uppercase tracking-[0.28em] text-white/40">Scene controls</p>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                <button
+                  onClick={toggleAnimation}
+                  className="btn btn-primary justify-start px-3 py-2 text-xs"
+                >
+                  {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                  {isPlaying ? 'Pause motion' : 'Resume motion'}
+                </button>
+                <button
+                  onClick={resetView}
+                  className="btn btn-secondary justify-start px-3 py-2 text-xs"
+                >
+                  <RotateCcw className="h-4 w-4" />
+                  Reset view
+                </button>
+                <button
+                  onClick={refreshSatellites}
+                  disabled={isLoading}
+                  className="btn btn-secondary justify-start px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+                  Refresh data
+                </button>
+                <button
+                  onClick={() => setShowSettings(!showSettings)}
+                  className="btn btn-secondary justify-start px-3 py-2 text-xs"
+                >
+                  <Settings className="h-4 w-4" />
+                  Adjust layers
+                </button>
+              </div>
             </div>
           </div>
         </motion.div>
 
-        {/* Control Buttons */}
-        <motion.div 
-          initial={{ opacity: 0, x: -20 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: 0.1 }}
-          className="bg-slate-900/90 backdrop-blur-xl rounded-xl p-3 border border-slate-700/50 flex gap-2"
-        >
-          <button
-            onClick={toggleAnimation}
-            className="p-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
-            title={isPlaying ? 'Pause' : 'Play'}
-          >
-            {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-          </button>
-          
-          <button
-            onClick={resetView}
-            className="p-2 bg-gray-600 hover:bg-gray-700 rounded-lg transition-colors"
-            title="Reset View"
-          >
-            <RotateCcw className="w-4 h-4" />
-          </button>
-          
-          <button
-            onClick={refreshSatellites}
-            className="p-2 bg-green-600 hover:bg-green-700 rounded-lg transition-colors"
-            title="Refresh Satellites"
-            disabled={isLoading}
-          >
-            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-          </button>
-          
-          <button
-            onClick={() => setShowSettings(!showSettings)}
-            className="p-2 bg-purple-600 hover:bg-purple-700 rounded-lg transition-colors"
-            title="Settings"
-          >
-            <Settings className="w-4 h-4" />
-          </button>
-        </motion.div>
-
-        {/* Settings Panel */}
         {showSettings && (
           <motion.div
-            initial={{ opacity: 0, x: -20 }}
+            initial={{ opacity: 0, x: -35 }}
             animate={{ opacity: 1, x: 0 }}
-            className="bg-slate-900/90 backdrop-blur-xl rounded-xl p-4 border border-slate-700/50 w-64"
+            className="glass-panel px-5 py-4 text-white/80"
           >
-            <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
-              <Layers className="w-4 h-4" />
-              Visualization Settings
-            </h3>
-            
-            <div className="space-y-3">
-              <div>
-                <label className="block text-sm text-gray-300 mb-1">Max Satellites</label>
-                <input
-                  type="range"
-                  min="50"
-                  max="500"
-                  step="50"
-                  value={visualizationSettings.maxSatellites}
-                  onChange={(e) => setVisualizationSettings({
-                    ...visualizationSettings,
-                    maxSatellites: parseInt(e.target.value)
-                  })}
-                  className="w-full"
-                />
-                <div className="text-xs text-gray-400">{visualizationSettings.maxSatellites}</div>
-              </div>
-              
-              <div>
-                <label className="block text-sm text-gray-300 mb-1">Filter Type</label>
-                <select
-                  value={visualizationSettings.filterType}
-                  onChange={(e) => setVisualizationSettings({
-                    ...visualizationSettings,
-                    filterType: e.target.value
-                  })}
-                  className="w-full p-2 bg-slate-700 border border-slate-600 rounded text-white text-sm"
-                >
-                  <option value="all">All Satellites</option>
-                  <option value="starlink">Starlink</option>
-                  <option value="gps">GPS/Navigation</option>
-                  <option value="geo">Communication</option>
-                </select>
-              </div>
-              
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="showLabels"
-                  checked={visualizationSettings.showLabels}
-                  onChange={(e) => setVisualizationSettings({
-                    ...visualizationSettings,
-                    showLabels: e.target.checked
-                  })}
-                  className="rounded"
-                />
-                <label htmlFor="showLabels" className="text-sm text-gray-300">Show Labels</label>
+            <div className="relative z-10 space-y-4">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.32em] text-white/60">
+                Visualization settings
+              </h3>
+
+              <div className="space-y-3 text-sm">
+                <div>
+                  <div className="flex items-center justify-between text-xs text-white/50">
+                    <span>Max satellites</span>
+                    <span>{visualizationSettings.maxSatellites}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="50"
+                    max="500"
+                    step="50"
+                    value={visualizationSettings.maxSatellites}
+                    onChange={(e) => setVisualizationSettings({
+                      ...visualizationSettings,
+                      maxSatellites: parseInt(e.target.value)
+                    })}
+                    className="mt-2 h-1 w-full cursor-pointer appearance-none rounded-full bg-white/20"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs uppercase tracking-[0.3em] text-white/50">
+                    Filter type
+                  </label>
+                  <select
+                    value={visualizationSettings.filterType}
+                    onChange={(e) => setVisualizationSettings({
+                      ...visualizationSettings,
+                      filterType: e.target.value
+                    })}
+                    className="mt-2 w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-2 text-sm text-white/80 focus:border-sky-400 focus:outline-none"
+                  >
+                    <option value="all">All satellites</option>
+                    <option value="starlink">Starlink</option>
+                    <option value="gps">GPS/Navigation</option>
+                    <option value="geo">Communication</option>
+                  </select>
+                </div>
+
+                <label className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">
+                  <span>Show labels</span>
+                  <input
+                    type="checkbox"
+                    checked={visualizationSettings.showLabels}
+                    onChange={(e) => setVisualizationSettings({
+                      ...visualizationSettings,
+                      showLabels: e.target.checked
+                    })}
+                    className="h-4 w-4 rounded-md border border-white/30 bg-transparent accent-sky-400"
+                  />
+                </label>
               </div>
             </div>
           </motion.div>
         )}
       </div>
 
-      {/* Selected Satellite Info */}
       {selectedSatellite && (
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="absolute bottom-4 right-4 z-50 bg-slate-900/90 backdrop-blur-xl rounded-xl p-4 border border-slate-700/50 max-w-sm"
+          initial={{ opacity: 0, x: 40 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="glass-panel absolute bottom-6 right-6 z-30 w-96 px-6 py-5 text-white/90"
         >
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-white font-semibold">Satellite Details</h3>
-            <button
-              onClick={() => setSelectedSatellite(null)}
-              className="text-gray-400 hover:text-white"
-            >
-              ×
-            </button>
-          </div>
-          <div className="space-y-2 text-sm">
-            <div>
-              <span className="text-gray-400">Name:</span>
-              <span className="text-white ml-2">{selectedSatellite.name}</span>
+          <div className="relative z-10 space-y-4">
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 className="text-lg font-semibold">{selectedSatellite.name}</h3>
+                <p className="text-xs uppercase tracking-[0.32em] text-white/50">NORAD {selectedSatellite.norad_id}</p>
+              </div>
+              <button
+                onClick={() => setSelectedSatellite(null)}
+                className="flex h-8 w-8 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white/60 transition hover:border-white/40 hover:bg-white/20 hover:text-white"
+              >
+                ×
+              </button>
             </div>
-            <div>
-              <span className="text-gray-400">NORAD ID:</span>
-              <span className="text-white ml-2">{selectedSatellite.norad_id}</span>
-            </div>
-            <div>
-              <span className="text-gray-400">Type:</span>
-              <span className="text-white ml-2">{selectedSatellite.type || 'Unknown'}</span>
-            </div>
-            <div>
-              <span className="text-gray-400">Altitude:</span>
-              <span className="text-white ml-2">{selectedSatellite.alt_km?.toFixed(1)} km</span>
-            </div>
-            <div>
-              <span className="text-gray-400">Velocity:</span>
-              <span className="text-white ml-2">{selectedSatellite.velocity_km_s?.toFixed(2)} km/s</span>
+
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <p className="text-xs uppercase tracking-[0.28em] text-white/40">Type</p>
+                <p className="mt-2 capitalize text-white/90">{selectedSatellite.type || 'Unknown'}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <p className="text-xs uppercase tracking-[0.28em] text-white/40">Altitude</p>
+                <p className="mt-2 font-mono text-white/90">{selectedSatellite.alt_km?.toFixed(1)} km</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
+                <p className="text-xs uppercase tracking-[0.28em] text-white/40">Latitude</p>
+                <p className="mt-2 font-mono text-white/90">{selectedSatellite.lat_deg?.toFixed(3)}°</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
+                <p className="text-xs uppercase tracking-[0.28em] text-white/40">Longitude</p>
+                <p className="mt-2 font-mono text-white/90">{selectedSatellite.lon_deg?.toFixed(3)}°</p>
+              </div>
+              {selectedSatellite.velocity_km_s && (
+                <div className="col-span-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                  <p className="text-xs uppercase tracking-[0.28em] text-white/40">Velocity</p>
+                  <p className="mt-2 font-mono text-white/90">{selectedSatellite.velocity_km_s?.toFixed(2)} km/s</p>
+                </div>
+              )}
             </div>
           </div>
         </motion.div>
       )}
 
-      {/* Loading Overlay */}
       {isLoading && (
-        <div className="absolute inset-0 z-40 bg-black/50 flex items-center justify-center">
-          <div className="bg-slate-900/90 backdrop-blur-xl rounded-xl p-6 border border-slate-700/50">
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="glass-panel relative z-10 px-6 py-4 text-sm font-medium text-white/80">
             <div className="flex items-center gap-3">
-              <div className="w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-              <span className="text-white">Loading enhanced satellite data...</span>
+              <RefreshCw className="h-5 w-5 animate-spin text-sky-300" />
+              <span>Loading enhanced satellite data...</span>
             </div>
           </div>
         </div>
       )}
 
-      {/* 3D Cesium Viewer */}
-      <Viewer 
+      <Viewer
         ref={viewerRef}
         {...viewerOptions}
         onReady={handleViewerReady}
-        className="w-full h-full"
+        className="h-full w-full"
       >
         {viewerReady && createSatelliteEntities()}
       </Viewer>

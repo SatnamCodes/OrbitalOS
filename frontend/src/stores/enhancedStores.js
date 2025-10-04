@@ -288,6 +288,26 @@ export const useEnhancedBookingsStore = create((set, get) => ({
     }
   },
 
+  analyzeConjunctions: async (request) => {
+    try {
+      const satelliteService = get().satelliteService
+      return await satelliteService.analyzeConjunctions(request)
+    } catch (error) {
+      console.error('❌ Conjunction analysis failed:', error)
+      throw error
+    }
+  },
+
+  predictRisk: async (request) => {
+    try {
+      const satelliteService = get().satelliteService
+      return await satelliteService.predictRisk(request)
+    } catch (error) {
+      console.error('❌ ML risk prediction failed:', error)
+      throw error
+    }
+  },
+
   // Check reservation conflicts
   checkConflicts: async (reservationId) => {
     try {

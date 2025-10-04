@@ -14,31 +14,78 @@
 
 @layer components {
   .btn {
-    @apply px-4 py-2 rounded-lg font-medium transition-colors duration-200;
+    @apply relative inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-full font-medium tracking-wide border border-white/10 bg-white/10 text-white transition-all duration-200 backdrop-blur-md shadow-[0_18px_45px_-28px_rgba(59,130,246,0.6)] hover:border-white/30 hover:bg-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent;
+  }
+
+  .btn::before {
+    content: "";
+    @apply absolute inset-0 -z-10 rounded-3xl bg-gradient-to-r from-white/20 via-white/10 to-white/20 opacity-0 transition-opacity duration-200;
+  }
+
+  .btn:hover::before,
+  .btn:focus-visible::before {
+    @apply opacity-100;
   }
   
   .btn-primary {
-    @apply bg-blue-600 hover:bg-blue-700 text-white;
+    @apply bg-gradient-to-r from-sky-500/80 via-indigo-500/80 to-purple-500/80 text-white border-white/20 shadow-[0_20px_60px_-28px_rgba(129,140,248,0.65)] hover:shadow-[0_25px_70px_-30px_rgba(99,102,241,0.75)];
   }
   
   .btn-secondary {
-    @apply bg-gray-700 hover:bg-gray-600 text-white;
+    @apply bg-white/10 text-white hover:bg-white/20 border-white/20;
   }
   
   .btn-danger {
-    @apply bg-red-600 hover:bg-red-700 text-white;
+    @apply bg-gradient-to-r from-rose-500/85 to-orange-500/80 text-white border-white/20 hover:shadow-[0_25px_70px_-30px_rgba(249,115,22,0.7)];
   }
   
   .card {
-    @apply bg-gray-800 rounded-xl p-6 border border-gray-700;
+    @apply relative overflow-hidden rounded-3xl border border-white/10 bg-white/10 p-6 text-white backdrop-blur-2xl shadow-[0_28px_60px_-34px_rgba(56,189,248,0.55)] transition-transform duration-300;
+  }
+  
+  .card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0));
+    opacity: 0.6;
+    pointer-events: none;
+  }
+
+  .card:hover {
+    @apply border-white/20 shadow-[0_32px_90px_-42px_rgba(56,189,248,0.75)] -translate-y-0.5;
+  }
+
+  .glass-panel {
+    @apply relative overflow-hidden rounded-[2rem] border border-white/10 bg-white/10 backdrop-blur-2xl shadow-[0_32px_90px_-48px_rgba(37,99,235,0.55)];
+  }
+
+  .glass-panel::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(circle at top, rgba(59, 130, 246, 0.22), transparent 55%);
+    opacity: 0.7;
+    pointer-events: none;
+  }
+
+  .glass-panel::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    pointer-events: none;
   }
   
   .input {
-    @apply w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent;
+    @apply w-full px-4 py-2.5 rounded-2xl border border-white/10 bg-white/10 text-white placeholder-white/40 backdrop-blur-md transition-all duration-200 focus:outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-500/60 focus:ring-offset-0;
   }
   
   .label {
-    @apply block text-sm font-medium text-gray-300 mb-2;
+    @apply block text-sm font-medium text-white/70 mb-2 uppercase tracking-[0.2em];
   }
 }
 
@@ -65,15 +112,16 @@
 }
 
 ::-webkit-scrollbar-track {
-  @apply bg-gray-800;
+  background-color: rgba(15, 23, 42, 0.6);
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-gray-600 rounded-full;
+  background-color: rgba(71, 85, 105, 0.7);
+  border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-gray-500;
+  background-color: rgba(148, 163, 184, 0.8);
 }
 
 /* Custom animations for starfield landing page */

@@ -32,10 +32,14 @@ if (ionToken) {
 }
 
 const Enhanced3DVisualizer = () => {
-  const { satellites, loadSatellites, isLoading } = useEnhancedSatellitesStore()
+  const { satellites, loadSatellites, isLoading, loadStats } = useEnhancedSatellitesStore()
   
   const viewerRef = useRef()
   const satrecCacheRef = useRef(new Map())
+  const positionPropertyCacheRef = useRef(new Map())
+  const satelliteDataRef = useRef(new Map())
+  const alignmentRef = useRef({ lat: 0, lon: 0 })
+  const lastClockUpdateRef = useRef(0)
   const pickMapRef = useRef(new Map())
   const hasAppliedTiltRef = useRef(false)
   const previousOffsetsRef = useRef({ lat: 0, lon: 0 })
@@ -62,15 +66,9 @@ const Enhanced3DVisualizer = () => {
   }, [satellites.length, loadSatellites])
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTime(new Date())
-    }, 5000)
-
-    return () => clearInterval(timer)
-  }, [])
-
-  useEffect(() => {
     satrecCacheRef.current.clear()
+    positionPropertyCacheRef.current.clear()
+    satelliteDataRef.current.clear()
   }, [satellites])
 
   // Get visualization data (limited for performance)
@@ -97,10 +95,59 @@ const Enhanced3DVisualizer = () => {
     return normalized
   }
 
+  const computeSatellitePosition = (satellite, timestamp = currentTime) => {
+    const targetTime = timestamp instanceof Cesium.JulianDate
+      ? Cesium.JulianDate.toDate(timestamp)
+      : timestamp
+
+    const time = targetTime instanceof Date ? targetTime : new Date(targetTime)
+
+    if (satellite?.tle_line1 && satellite?.tle_line2) {
+      const cacheKey = satellite.norad_id || satellite.id
+      let satrec = cacheKey ? satrecCacheRef.current.get(cacheKey) : null
+
+      if (!satrec) {
+        try {
+          satrec = twoline2satrec(satellite.tle_line1.trim(), satellite.tle_line2.trim())
+          if (cacheKey && satrec) {
+            satrecCacheRef.current.set(cacheKey, satrec)
+          }
+        } catch (error) {
+          console.warn('⚠️ Failed to parse TLE for satellite', satellite.name, error)
+          satrec = null
+        }
+      }
+
+      if (satrec) {
+        try {
+          const propagation = propagate(satrec, time)
+          if (propagation.position) {
+            const gmst = gstime(time)
+            const geodetic = eciToGeodetic(propagation.position, gmst)
+            const lat = degreesLat(geodetic.latitude)
+            const lon = degreesLong(geodetic.longitude)
+            const altKm = Number.isFinite(geodetic.height)
+              ? geodetic.height
+              : satellite.alt_km ?? satellite.altitude ?? 0
+
+            return { lat, lon, altKm }
+          }
+        } catch (error) {
+          console.warn('⚠️ SGP4 propagation failed for', satellite.name, error)
+        }
+      }
+    }
+
+    const lat = satellite.lat_deg ?? satellite.latitude ?? 0
+    const lon = satellite.lon_deg ?? satellite.longitude ?? 0
+    const altKm = satellite.alt_km ?? satellite.altitude ?? 0
+    return { lat, lon, altKm }
+  }
+
   const propagatedVisualizationData = useMemo(() => {
     return visualizationData
       .map((satellite, index) => {
-        const { lat, lon, altKm } = propagateSatellitePosition(satellite, currentTime)
+        const { lat, lon, altKm } = computeSatellitePosition(satellite, currentTime)
 
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
           return null
@@ -163,21 +210,42 @@ const Enhanced3DVisualizer = () => {
       const correctedLat = satellite.propagatedLat - alignmentOffsets.lat
       const correctedLon = Cesium.Math.convertLongitudeRange(satellite.propagatedLon - alignmentOffsets.lon)
       const correctedAltKm = satellite.propagatedAltKm
-      const position = Cesium.Cartesian3.fromDegrees(
-        correctedLon,
-        correctedLat,
-        Number.isFinite(correctedAltKm) ? correctedAltKm * 1000 : 0
-      )
-
       return {
         ...satellite,
         correctedLat,
         correctedLon,
-        correctedAltKm,
-        position
+        correctedAltKm
       }
     })
   }, [propagatedVisualizationData, alignmentOffsets])
+
+  useEffect(() => {
+    alignmentRef.current = {
+      lat: alignmentOffsets.lat,
+      lon: alignmentOffsets.lon
+    }
+  }, [alignmentOffsets.lat, alignmentOffsets.lon])
+
+  useEffect(() => {
+    if (!viewerReady || !viewerRef.current?.cesiumElement) return
+
+    const viewer = viewerRef.current.cesiumElement
+    const clock = viewer.clock
+
+    const updateFromClock = (clockInstance) => {
+      const now = Cesium.JulianDate.toDate(clockInstance.currentTime)
+      const last = lastClockUpdateRef.current
+      if (!last || now.getTime() - last >= 1000) {
+        lastClockUpdateRef.current = now.getTime()
+        setCurrentTime(now)
+      }
+    }
+
+    clock.shouldAnimate = true
+    return () => {
+      clock.onTick.removeEventListener(updateFromClock)
+    }
+  }, [viewerReady])
 
   // Cesium viewer configuration
   const viewerOptions = {
@@ -226,49 +294,29 @@ const Enhanced3DVisualizer = () => {
     return Cesium.Color.WHITE
   }
 
-  const propagateSatellitePosition = (satellite, time) => {
-    const timestamp = time ?? currentTime
+  const getPositionProperty = (satellite) => {
+    const entityId = satellite.entityId
+    if (!entityId) return undefined
 
-    if (satellite?.tle_line1 && satellite?.tle_line2) {
-      const cacheKey = satellite.norad_id || satellite.id
-      let satrec = cacheKey ? satrecCacheRef.current.get(cacheKey) : null
-
-      if (!satrec) {
-        try {
-          satrec = twoline2satrec(satellite.tle_line1.trim(), satellite.tle_line2.trim())
-          if (cacheKey && satrec) {
-            satrecCacheRef.current.set(cacheKey, satrec)
-          }
-        } catch (error) {
-          console.warn('⚠️ Failed to parse TLE for satellite', satellite.name, error)
-          satrec = null
-        }
-      }
-
-      if (satrec) {
-        try {
-          const propagation = propagate(satrec, timestamp)
-          if (propagation.position) {
-            const gmst = gstime(timestamp)
-            const geodetic = eciToGeodetic(propagation.position, gmst)
-            const lat = degreesLat(geodetic.latitude)
-            const lon = degreesLong(geodetic.longitude)
-            const altKm = Number.isFinite(geodetic.height)
-              ? geodetic.height
-              : satellite.alt_km ?? satellite.altitude ?? 0
-
-            return { lat, lon, altKm }
-          }
-        } catch (error) {
-          console.warn('⚠️ SGP4 propagation failed for', satellite.name, error)
-        }
-      }
+    const cachedProperty = positionPropertyCacheRef.current.get(entityId)
+    if (cachedProperty) {
+      return cachedProperty
     }
 
-    const lat = satellite.lat_deg ?? satellite.latitude ?? 0
-    const lon = satellite.lon_deg ?? satellite.longitude ?? 0
-    const altKm = satellite.alt_km ?? satellite.altitude ?? 0
-    return { lat, lon, altKm }
+    const property = new Cesium.CallbackProperty((time, result) => {
+      const activeSatellite = satelliteDataRef.current.get(entityId) || satellite
+      const date = time ? Cesium.JulianDate.toDate(time) : currentTime
+      const { lat, lon, altKm } = computeSatellitePosition(activeSatellite, date)
+      const offsets = alignmentRef.current
+      const correctedLat = lat - offsets.lat
+      const correctedLon = Cesium.Math.convertLongitudeRange(lon - offsets.lon)
+      const height = Number.isFinite(altKm) ? altKm * 1000 : 0
+
+      return Cesium.Cartesian3.fromDegrees(correctedLon, correctedLat, height, result)
+    }, false)
+
+    positionPropertyCacheRef.current.set(entityId, property)
+    return property
   }
 
   // Create satellite entities
@@ -279,12 +327,14 @@ const Enhanced3DVisualizer = () => {
       const entityId = satellite.entityId || `sat-${satellite.norad_id || satellite.id}`
 
       pickMap.set(entityId, satellite)
+      satelliteDataRef.current.set(entityId, satellite)
+      const positionProperty = getPositionProperty(satellite)
 
       return (
         <Entity
           key={entityId}
           id={entityId}
-          position={satellite.position}
+          position={positionProperty}
           point={{
             pixelSize: visualizationSettings.satelliteSize,
             color: color,
@@ -324,6 +374,17 @@ const Enhanced3DVisualizer = () => {
       viewer.camera.setView({
         destination: Cesium.Cartesian3.fromDegrees(0, 30, 15000000)
       })
+
+      viewer.clock.shouldAnimate = true
+      viewer.clock.multiplier = 60
+      setIsPlaying(true)
+
+      const controller = viewer.scene.screenSpaceCameraController
+      controller.inertiaSpin = 0.95
+      controller.inertiaTranslate = 0.85
+      controller.inertiaZoom = 0.85
+      controller.maximumZoomDistance = 6.0e7
+      controller.minimumZoomDistance = 400000
 
       // Enable lighting for realistic day/night
       viewer.scene.globe.enableLighting = true
@@ -462,11 +523,14 @@ const Enhanced3DVisualizer = () => {
 
   // Toggle animation
   const toggleAnimation = () => {
-    setIsPlaying(!isPlaying)
     if (viewerRef.current?.cesiumElement) {
       const viewer = viewerRef.current.cesiumElement
-      viewer.clock.shouldAnimate = !isPlaying
-      toast.success(isPlaying ? 'Animation paused' : 'Animation playing')
+      setIsPlaying((prev) => {
+        const next = !prev
+        viewer.clock.shouldAnimate = next
+        toast.success(next ? 'Animation playing' : 'Animation paused')
+        return next
+      })
     }
   }
 
@@ -479,6 +543,7 @@ const Enhanced3DVisualizer = () => {
       })
       setSelectedSatellite(null)
       hasAppliedTiltRef.current = false
+      positionPropertyCacheRef.current.clear()
       toast.success('View reset to Earth overview')
     }
   }
@@ -486,9 +551,53 @@ const Enhanced3DVisualizer = () => {
   // Refresh satellites
   const refreshSatellites = () => {
     console.log('🔄 Refreshing 3D satellite data...')
+    positionPropertyCacheRef.current.clear()
+    satelliteDataRef.current.clear()
     loadSatellites()
     toast.success('Refreshing satellite data...')
   }
+
+  useEffect(() => {
+    const validIds = new Set(alignedVisualizationData.map((sat) => sat.entityId))
+
+    positionPropertyCacheRef.current.forEach((_, key) => {
+      if (!validIds.has(key)) {
+        positionPropertyCacheRef.current.delete(key)
+      }
+    })
+
+    pickMapRef.current.forEach((_, key) => {
+      if (!validIds.has(key)) {
+        pickMapRef.current.delete(key)
+      }
+    })
+
+    satelliteDataRef.current.forEach((_, key) => {
+      if (!validIds.has(key)) {
+        satelliteDataRef.current.delete(key)
+      }
+    })
+  }, [alignedVisualizationData])
+
+  useEffect(() => {
+    if (!viewerReady || !viewerRef.current?.cesiumElement) return
+    if (!selectedSatellite) return
+
+    const viewer = viewerRef.current.cesiumElement
+    const activeSatellite = satelliteDataRef.current.get(selectedSatellite.entityId) || selectedSatellite
+    const date = Cesium.JulianDate.toDate(viewer.clock.currentTime)
+    const { lat, lon, altKm } = computeSatellitePosition(activeSatellite, date)
+    const offsets = alignmentRef.current
+    const correctedLat = lat - offsets.lat
+    const correctedLon = Cesium.Math.convertLongitudeRange(lon - offsets.lon)
+    const height = Number.isFinite(altKm) ? (altKm + 500) * 1000 : 500000
+
+    viewer.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(correctedLon, correctedLat, height),
+      duration: 1.5,
+      easingFunction: Cesium.EasingFunction.QUADRATIC_OUT
+    })
+  }, [selectedSatellite?.entityId, viewerReady])
 
   return (
     <div className="h-screen w-full bg-black relative overflow-hidden">
@@ -512,6 +621,10 @@ const Enhanced3DVisualizer = () => {
             <div>
               <div className="text-gray-400">Visualizing</div>
               <div className="text-green-400 font-bold">{alignedVisualizationData.length}</div>
+            </div>
+            <div className="col-span-2 text-[11px] text-gray-400">
+              Last load: {loadStats?.lastLoadMs != null ? `${loadStats.lastLoadMs} ms` : '—'}
+              {loadStats?.lastSource ? ` · ${loadStats.lastSource}` : ''}
             </div>
           </div>
         </motion.div>

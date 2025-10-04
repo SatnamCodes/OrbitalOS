@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
-use uuid::Uuid;
-use std::collections::HashMap;
 use rand::prelude::*;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use uuid::Uuid;
 
 /// Represents a satellite in our system
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -12,14 +12,14 @@ pub struct Satellite {
     pub norad_id: Option<u32>,
     pub latitude: f64,
     pub longitude: f64,
-    pub altitude: f64, // km above Earth
-    pub velocity: f64, // km/s
+    pub altitude: f64,    // km above Earth
+    pub velocity: f64,    // km/s
     pub inclination: f64, // degrees
     pub eccentricity: f64,
-    pub right_ascension: f64, // degrees
+    pub right_ascension: f64,     // degrees
     pub argument_of_perigee: f64, // degrees
-    pub mean_anomaly: f64, // degrees
-    pub mean_motion: f64, // revs per day
+    pub mean_anomaly: f64,        // degrees
+    pub mean_motion: f64,         // revs per day
     pub satellite_type: SatelliteType,
     pub status: SatelliteStatus,
     pub launch_date: Option<DateTime<Utc>>,
@@ -66,7 +66,7 @@ pub struct GroundStation {
     pub name: String,
     pub latitude: f64,
     pub longitude: f64,
-    pub altitude: f64, // meters above sea level
+    pub altitude: f64,      // meters above sea level
     pub min_elevation: f64, // minimum elevation for tracking (degrees)
 }
 
@@ -82,11 +82,11 @@ impl SatelliteService {
             satellites: HashMap::new(),
             ground_stations: HashMap::new(),
         };
-        
+
         // Initialize with realistic satellite data
         service.initialize_satellites();
         service.initialize_ground_stations();
-        
+
         service
     }
 
@@ -145,7 +145,7 @@ impl SatelliteService {
 
     fn create_starlink_satellite(&self, index: u32) -> Satellite {
         let mut rng = thread_rng();
-        
+
         // Starlink constellation parameters
         let inclination = 53.0 + rng.gen::<f64>() * 2.0; // ~53 degrees
         let altitude = 540.0 + rng.gen::<f64>() * 30.0; // ~540-570 km
@@ -182,7 +182,7 @@ impl SatelliteService {
 
     fn create_gps_satellite(&self, index: u32) -> Satellite {
         let mut rng = thread_rng();
-        
+
         let inclination = 55.0;
         let altitude = 20180.0;
         let longitude = rng.gen::<f64>() * 360.0 - 180.0;
@@ -218,7 +218,7 @@ impl SatelliteService {
 
     fn create_weather_satellite(&self, index: u32) -> Satellite {
         let mut rng = thread_rng();
-        
+
         let altitude = 35786.0;
         let longitude = -75.0 + (index as f64 * 30.0);
         let latitude = 0.0;
@@ -253,7 +253,7 @@ impl SatelliteService {
 
     fn create_earth_observation_satellite(&self, index: u32) -> Satellite {
         let mut rng = thread_rng();
-        
+
         let inclination = 98.0 + rng.gen::<f64>() * 2.0;
         let altitude = 600.0 + rng.gen::<f64>() * 300.0;
         let longitude = rng.gen::<f64>() * 360.0 - 180.0;
@@ -289,7 +289,7 @@ impl SatelliteService {
 
     fn create_iss(&self) -> Satellite {
         let mut rng = thread_rng();
-        
+
         let altitude = 408.0;
         let inclination = 51.6;
         let longitude = rng.gen::<f64>() * 360.0 - 180.0;
@@ -311,7 +311,11 @@ impl SatelliteService {
             mean_motion: self.calculate_mean_motion(altitude),
             satellite_type: SatelliteType::SpaceStation,
             status: SatelliteStatus::Active,
-            launch_date: Some(chrono::DateTime::parse_from_rfc3339("1998-11-20T00:00:00Z").unwrap().with_timezone(&Utc)),
+            launch_date: Some(
+                chrono::DateTime::parse_from_rfc3339("1998-11-20T00:00:00Z")
+                    .unwrap()
+                    .with_timezone(&Utc),
+            ),
             mass: Some(444615.0),
             dimensions: Some(SatelliteDimensions {
                 length: 108.5,
@@ -327,7 +331,7 @@ impl SatelliteService {
     fn calculate_orbital_velocity(&self, altitude_km: f64) -> f64 {
         const EARTH_RADIUS_KM: f64 = 6371.0;
         const EARTH_MU: f64 = 398600.4418; // km³/s²
-        
+
         let r = EARTH_RADIUS_KM + altitude_km;
         (EARTH_MU / r).sqrt()
     }
@@ -337,7 +341,7 @@ impl SatelliteService {
         const EARTH_RADIUS_KM: f64 = 6371.0;
         const EARTH_MU: f64 = 398600.4418; // km³/s²
         const SECONDS_PER_DAY: f64 = 86400.0;
-        
+
         let r = EARTH_RADIUS_KM + altitude_km;
         let period_seconds = 2.0 * std::f64::consts::PI * (r.powi(3) / EARTH_MU).sqrt();
         SECONDS_PER_DAY / period_seconds
@@ -352,7 +356,9 @@ impl SatelliteService {
     pub fn get_satellites_by_type(&self, satellite_type: &SatelliteType) -> Vec<Satellite> {
         self.satellites
             .values()
-            .filter(|s| std::mem::discriminant(&s.satellite_type) == std::mem::discriminant(satellite_type))
+            .filter(|s| {
+                std::mem::discriminant(&s.satellite_type) == std::mem::discriminant(satellite_type)
+            })
             .cloned()
             .collect()
     }
@@ -368,7 +374,13 @@ impl SatelliteService {
         self.satellites
             .values()
             .filter(|satellite| {
-                self.is_satellite_visible(satellite, observer_lat, observer_lon, observer_alt, min_elevation)
+                self.is_satellite_visible(
+                    satellite,
+                    observer_lat,
+                    observer_lon,
+                    observer_alt,
+                    min_elevation,
+                )
             })
             .cloned()
             .collect()
@@ -384,26 +396,28 @@ impl SatelliteService {
         _min_elevation: f64,
     ) -> bool {
         let distance = self.calculate_distance(
-            observer_lat, observer_lon,
-            satellite.latitude, satellite.longitude
+            observer_lat,
+            observer_lon,
+            satellite.latitude,
+            satellite.longitude,
         );
-        
+
         distance < 2000.0 && satellite.altitude > 100.0
     }
 
     /// Calculate great circle distance between two points
     fn calculate_distance(&self, lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
         const EARTH_RADIUS: f64 = 6371.0; // km
-        
+
         let lat1_rad = lat1.to_radians();
         let lat2_rad = lat2.to_radians();
         let delta_lat = (lat2 - lat1).to_radians();
         let delta_lon = (lon2 - lon1).to_radians();
-        
-        let a = (delta_lat / 2.0).sin().powi(2) +
-            lat1_rad.cos() * lat2_rad.cos() * (delta_lon / 2.0).sin().powi(2);
+
+        let a = (delta_lat / 2.0).sin().powi(2)
+            + lat1_rad.cos() * lat2_rad.cos() * (delta_lon / 2.0).sin().powi(2);
         let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
-        
+
         EARTH_RADIUS * c
     }
 
@@ -412,29 +426,29 @@ impl SatelliteService {
         for satellite in self.satellites.values_mut() {
             let angular_velocity = satellite.mean_motion * 360.0 / 1440.0;
             let time_step = 1.0;
-            
+
             satellite.mean_anomaly += angular_velocity * time_step;
             satellite.mean_anomaly %= 360.0;
-            
+
             // Update position inline to avoid borrow checker issues
             let mean_anomaly_rad = satellite.mean_anomaly.to_radians();
             let inclination_rad = satellite.inclination.to_radians();
             let raan_rad = satellite.right_ascension.to_radians();
-            
+
             let x = satellite.altitude * mean_anomaly_rad.cos();
             let y = satellite.altitude * mean_anomaly_rad.sin() * inclination_rad.cos();
             let z = satellite.altitude * mean_anomaly_rad.sin() * inclination_rad.sin();
-            
+
             satellite.latitude = (z / satellite.altitude).asin().to_degrees();
             satellite.longitude = (y.atan2(x) + raan_rad).to_degrees();
-            
+
             while satellite.longitude > 180.0 {
                 satellite.longitude -= 360.0;
             }
             while satellite.longitude < -180.0 {
                 satellite.longitude += 360.0;
             }
-            
+
             satellite.latitude = satellite.latitude.max(-90.0).min(90.0);
             satellite.updated_at = Utc::now();
         }
@@ -445,21 +459,21 @@ impl SatelliteService {
         let mean_anomaly_rad = satellite.mean_anomaly.to_radians();
         let inclination_rad = satellite.inclination.to_radians();
         let raan_rad = satellite.right_ascension.to_radians();
-        
+
         let x = satellite.altitude * mean_anomaly_rad.cos();
         let y = satellite.altitude * mean_anomaly_rad.sin() * inclination_rad.cos();
         let z = satellite.altitude * mean_anomaly_rad.sin() * inclination_rad.sin();
-        
+
         satellite.latitude = (z / satellite.altitude).asin().to_degrees();
         satellite.longitude = (y.atan2(x) + raan_rad).to_degrees();
-        
+
         while satellite.longitude > 180.0 {
             satellite.longitude -= 360.0;
         }
         while satellite.longitude < -180.0 {
             satellite.longitude += 360.0;
         }
-        
+
         satellite.latitude = satellite.latitude.max(-90.0).min(90.0);
     }
 

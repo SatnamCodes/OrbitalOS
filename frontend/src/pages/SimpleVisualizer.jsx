@@ -122,48 +122,63 @@ const Visualizer = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 text-white p-8">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="mb-8">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h1 className="text-4xl font-bold mb-2">Enhanced Satellite Visualizer</h1>
-              <p className="text-xl text-gray-300">
-                Real satellite data from Celestrak ({satellites.length.toLocaleString()} satellites)
-                {satellites.length === 0 && !isLoading && (
-                  <span className="text-red-400 ml-2">- No data loaded yet</span>
-                )}
-                {error && (
-                  <span className="text-red-400 ml-2">- Error: {error}</span>
-                )}
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={refreshSatellites}
-                disabled={isLoading}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg transition-colors"
-              >
-                <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-                Refresh Data
-              </button>
-              <button
-                onClick={testAPI}
-                className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg transition-colors"
-              >
-                🧪 Test API
-              </button>
+    <div className="space-y-10 pb-24">
+      <motion.div
+        initial={{ opacity: 0, y: -12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, ease: 'easeOut' }}
+        className="glass-panel px-6 py-6 sm:px-8 lg:px-10"
+      >
+        <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-[0.45em] text-white/60">Realtime catalog</p>
+            <h1 className="mt-2 text-2xl font-semibold text-white sm:text-3xl">Enhanced Satellite Visualizer</h1>
+            <p className="mt-2 max-w-2xl text-sm text-white/65">
+              Streaming Celestrak telemetry with filters, search, and risk cues. Instantly slice the catalog across operators and constellations.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-3 text-xs text-white/60">
+              <span className="rounded-full border border-white/10 bg-white/8 px-3 py-1.5">
+                {satellites.length.toLocaleString()} tracked assets
+              </span>
+              {satellites.length === 0 && !isLoading && (
+                <span className="rounded-full border border-rose-400/50 bg-rose-500/20 px-3 py-1.5 text-rose-200">
+                  No data loaded yet
+                </span>
+              )}
+              {error && (
+                <span className="rounded-full border border-amber-400/40 bg-amber-500/15 px-3 py-1.5 text-amber-200">
+                  Error: {error}
+                </span>
+              )}
             </div>
           </div>
+          <div className="flex flex-wrap gap-3">
+            <button
+              onClick={refreshSatellites}
+              disabled={isLoading}
+              className="btn btn-secondary whitespace-nowrap"
+            >
+              <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+              Refresh Data
+            </button>
+            <button
+              onClick={testAPI}
+              className="btn btn-primary whitespace-nowrap"
+            >
+              🧪 Test API
+            </button>
+          </div>
         </div>
+      </motion.div>
+
+      <div className="mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-0">
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4 mb-8">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-slate-700/50"
+            className="card border border-white/10"
           >
             <div className="flex items-center gap-3 mb-2">
               <Satellite className="w-6 h-6 text-blue-400" />
@@ -176,7 +191,7 @@ const Visualizer = () => {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
-            className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-slate-700/50"
+            className="card border border-white/10"
           >
             <div className="flex items-center gap-3 mb-2">
               <div className="w-6 h-6 bg-cyan-500 rounded"></div>
@@ -189,7 +204,7 @@ const Visualizer = () => {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
-            className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-slate-700/50"
+            className="card border border-white/10"
           >
             <div className="flex items-center gap-3 mb-2">
               <div className="w-6 h-6 bg-green-500 rounded"></div>
@@ -202,7 +217,7 @@ const Visualizer = () => {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3 }}
-            className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-slate-700/50"
+            className="card border border-white/10"
           >
             <div className="flex items-center gap-3 mb-2">
               <div className="w-6 h-6 bg-orange-500 rounded"></div>
@@ -213,14 +228,14 @@ const Visualizer = () => {
         </div>
 
         {/* Controls */}
-        <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-slate-700/50 mb-8">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="card border border-white/10 mb-8">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div>
-              <label className="block text-sm font-medium mb-2">Filter by Type</label>
+              <label className="label">Filter by Type</label>
               <select
                 value={selectedFilter}
                 onChange={(e) => setSelectedFilter(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white"
+                className="input bg-white/10"
               >
                 <option value="all">All Satellites</option>
                 <option value="starlink">Starlink</option>
@@ -229,20 +244,20 @@ const Visualizer = () => {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium mb-2">Search Satellites</label>
+              <label className="label">Search Satellites</label>
               <input
                 type="text"
                 placeholder="Search by name or NORAD ID..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-gray-400"
+                className="input"
               />
             </div>
           </div>
         </div>
 
         {/* Satellite List */}
-        <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-slate-700/50">
+        <div className="card border border-white/10">
           <div className="flex items-center gap-2 mb-4">
             <BarChart3 className="w-5 h-5" />
             <h2 className="text-xl font-bold">
@@ -276,8 +291,8 @@ const Visualizer = () => {
                     onKeyDown={(event) => handleCardKeyDown(event, satellite)}
                     role="button"
                     tabIndex={0}
-                    className={`group rounded-xl p-4 select-none cursor-pointer bg-gradient-to-br from-slate-800/70 via-slate-800/40 to-slate-900/70 border border-slate-600/40 backdrop-blur-sm transition-all duration-200 shadow-sm hover:shadow-lg hover:border-slate-400/60 ${
-                      isSelected ? 'ring-2 ring-blue-400/70 shadow-blue-500/20' : 'ring-0'
+                    className={`group select-none cursor-pointer rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur-lg transition-all duration-200 hover:border-white/40 hover:shadow-[0_24px_60px_-38px_rgba(56,189,248,0.75)] ${
+                      isSelected ? 'ring-2 ring-sky-400/60 shadow-[0_30px_70px_-48px_rgba(56,189,248,0.65)]' : 'ring-0'
                     }`}
                   >
                     <div className="flex items-center gap-3 mb-2">
@@ -327,21 +342,21 @@ const Visualizer = () => {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 40, scale: 0.95 }}
             transition={{ type: 'spring', stiffness: 180, damping: 22 }}
-            className="fixed bottom-8 right-8 w-full max-w-md bg-gradient-to-br from-slate-950/95 via-slate-900/90 to-slate-800/90 border border-slate-700/60 backdrop-blur-2xl rounded-2xl shadow-2xl shadow-blue-500/20 p-6 z-20"
+            className="glass-panel fixed bottom-8 right-8 z-20 w-full max-w-md border border-white/10 p-6 shadow-[0_32px_90px_-48px_rgba(56,189,248,0.55)]"
           >
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs uppercase tracking-wide text-slate-400 mb-1">Selected Satellite</p>
+                <p className="text-xs uppercase tracking-wide text-white/60 mb-1">Selected Satellite</p>
                 <h3 className="text-xl font-semibold text-white leading-tight">
                   {selectedSatellite.name}
                 </h3>
-                <p className="text-sm text-slate-400 mt-1">
+                <p className="text-sm text-white/60 mt-1">
                   NORAD {selectedSatellite.norad_id ?? '—'} • {formatLabel(selectedSatellite.type)}
                 </p>
               </div>
               <button
                 onClick={() => setSelectedSatellite(null)}
-                className="p-1 rounded-full bg-slate-800/60 hover:bg-slate-700/80 transition-colors border border-slate-600/60 text-slate-300 hover:text-white"
+                className="btn btn-secondary !px-3 !py-1 text-xs"
                 aria-label="Close satellite details"
               >
                 <X className="w-4 h-4" />
@@ -349,68 +364,53 @@ const Visualizer = () => {
             </div>
 
             <div className="grid grid-cols-2 gap-3 mt-6 text-sm">
-              <div className="flex flex-col gap-1 rounded-xl bg-slate-900/60 border border-slate-700/60 p-3">
-                <div className="flex items-center gap-2 text-slate-400 text-xs uppercase tracking-wide">
-                  <Globe className="w-4 h-4 text-blue-300" /> Latitude
+              {[{
+                icon: <Globe className="w-4 h-4 text-blue-300" />, label: 'Latitude', value: `${formatNumber(selectedSatellite.latitude, 2)}°`
+              }, {
+                icon: <Compass className="w-4 h-4 text-emerald-300" />, label: 'Longitude', value: `${formatNumber(selectedSatellite.longitude, 2)}°`
+              }, {
+                icon: <GaugeCircle className="w-4 h-4 text-indigo-300" />, label: 'Altitude', value: `${formatNumber(selectedSatellite.alt_km ?? selectedSatellite.altitude, 1)} km`
+              }, {
+                icon: <Activity className="w-4 h-4 text-amber-300" />, label: 'Velocity', value: `${formatNumber(selectedSatellite.velocity_km_s ?? selectedSatellite.velocity, 2)} km/s`
+              }].map((item) => (
+                <div key={item.label} className="flex flex-col gap-1 rounded-2xl border border-white/10 bg-white/8 p-3">
+                  <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-white/50">
+                    {item.icon}
+                    {item.label}
+                  </div>
+                  <span className="text-base font-semibold text-white">{item.value}</span>
                 </div>
-                <span className="text-base font-semibold text-white">
-                  {formatNumber(selectedSatellite.latitude, 2)}°
-                </span>
-              </div>
-              <div className="flex flex-col gap-1 rounded-xl bg-slate-900/60 border border-slate-700/60 p-3">
-                <div className="flex items-center gap-2 text-slate-400 text-xs uppercase tracking-wide">
-                  <Compass className="w-4 h-4 text-emerald-300" /> Longitude
-                </div>
-                <span className="text-base font-semibold text-white">
-                  {formatNumber(selectedSatellite.longitude, 2)}°
-                </span>
-              </div>
-              <div className="flex flex-col gap-1 rounded-xl bg-slate-900/60 border border-slate-700/60 p-3">
-                <div className="flex items-center gap-2 text-slate-400 text-xs uppercase tracking-wide">
-                  <GaugeCircle className="w-4 h-4 text-indigo-300" /> Altitude
-                </div>
-                <span className="text-base font-semibold text-white">
-                  {formatNumber(selectedSatellite.alt_km ?? selectedSatellite.altitude, 1)} km
-                </span>
-              </div>
-              <div className="flex flex-col gap-1 rounded-xl bg-slate-900/60 border border-slate-700/60 p-3">
-                <div className="flex items-center gap-2 text-slate-400 text-xs uppercase tracking-wide">
-                  <Activity className="w-4 h-4 text-amber-300" /> Velocity
-                </div>
-                <span className="text-base font-semibold text-white">
-                  {formatNumber(selectedSatellite.velocity_km_s ?? selectedSatellite.velocity, 2)} km/s
-                </span>
-              </div>
+              ))}
             </div>
 
-            <div className="mt-5 flex flex-wrap items-center gap-3 text-xs text-slate-400">
-              <span className="px-3 py-1 rounded-full bg-slate-800/60 border border-slate-700/60">
+            <div className="mt-5 flex flex-wrap items-center gap-3 text-xs text-white/60">
+              <span className="rounded-full border border-white/15 bg-white/10 px-3 py-1">
                 Source: {formatLabel(selectedSatellite.source)}
               </span>
               {selectedSatellite.timestamp && (
-                <span className="px-3 py-1 rounded-full bg-slate-800/60 border border-slate-700/60">
+                <span className="rounded-full border border-white/15 bg-white/10 px-3 py-1">
                   Updated: {new Date(selectedSatellite.timestamp).toLocaleString()}
                 </span>
               )}
             </div>
 
             {(selectedSatellite.riskLevel || Number.isFinite(selectedSatellite.riskScore)) && (
-              <div className="mt-6 flex items-start gap-3 rounded-xl bg-slate-900/60 border border-slate-700/60 p-3">
+              <div className="mt-6 flex items-start gap-3 rounded-2xl border border-amber-400/40 bg-amber-500/10 p-3">
                 <AlertTriangle className="w-5 h-5 text-amber-300 mt-0.5" />
                 <div>
-                  <p className="text-xs uppercase tracking-wide text-slate-400">Risk Assessment</p>
+                  <p className="text-xs uppercase tracking-wide text-white/60">Risk Assessment</p>
                   {selectedSatellite.riskLevel && (
                     <p className="text-sm font-semibold text-white mt-1">
                       {formatLabel(selectedSatellite.riskLevel)}
                     </p>
                   )}
                   {Number.isFinite(selectedSatellite.riskScore) && (
-                    <p className="text-xs text-slate-400 mt-1">
+                    <p className="text-xs text-white/60 mt-1">
                       Score: {formatNumber(selectedSatellite.riskScore, 4)}
                     </p>
                   )}
                   {selectedSatellite.riskReason && (
-                    <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+                    <p className="text-xs text-white/60 mt-2 leading-relaxed">
                       {selectedSatellite.riskReason}
                     </p>
                   )}

@@ -4,6 +4,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
 import { Satellite, Eye, EyeOff, User, Mail, Lock } from 'lucide-react'
 import toast from 'react-hot-toast'
+import CosmicBackdrop from '../components/CosmicBackdrop'
 
 const LoginPage = () => {
   const navigate = useNavigate()
@@ -51,11 +52,14 @@ const LoginPage = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 flex">
+    <div className="relative min-h-screen flex text-white overflow-hidden">
+      <CosmicBackdrop />
       {/* Left side - Branding */}
-      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-blue-600 to-purple-600 items-center justify-center relative overflow-hidden">
-        <div className="absolute inset-0 bg-black/20" />
-        <div className="relative z-10 text-center text-white">
+      <div className="hidden lg:flex lg:w-1/2 items-center justify-center relative overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-900/80 via-indigo-900/70 to-slate-950/80 backdrop-blur-xl" />
+        <div className="absolute inset-0 opacity-60 mix-blend-screen bg-[radial-gradient(circle_at_top,_rgba(56,189,248,0.25),_transparent_55%)]" />
+        <div className="absolute inset-0 opacity-40 blur-3xl bg-[radial-gradient(circle_at_20%_80%,_rgba(14,165,233,0.45),_transparent_65%)]" />
+        <div className="relative z-10 text-center px-10">
           <motion.div
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
@@ -71,17 +75,18 @@ const LoginPage = () => {
         </div>
         
         {/* Animated background elements */}
-        <div className="absolute top-1/4 left-1/4 w-32 h-32 bg-white/10 rounded-full blur-xl animate-pulse" />
-        <div className="absolute bottom-1/4 right-1/4 w-48 h-48 bg-white/10 rounded-full blur-xl animate-pulse delay-1000" />
+        <div className="absolute top-1/4 left-1/4 w-36 h-36 bg-sky-400/20 rounded-full blur-3xl animate-pulse" />
+        <div className="absolute bottom-1/4 right-1/4 w-52 h-52 bg-fuchsia-400/20 rounded-full blur-3xl animate-pulse delay-1000" />
       </div>
 
       {/* Right side - Login Form */}
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-8">
+      <div className="relative w-full lg:w-1/2 flex items-center justify-center p-6 sm:p-10">
+        <div className="absolute inset-0 bg-black/40 backdrop-blur-md lg:bg-black/30" />
         <motion.div
           initial={{ opacity: 0, x: 50 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.8 }}
-          className="w-full max-w-md"
+          className="relative z-10 w-full max-w-md space-y-6"
         >
           <div className="text-center mb-8">
             <Link to="/" className="inline-flex items-center space-x-2 text-blue-500 hover:text-blue-400 transition-colors">
@@ -91,7 +96,7 @@ const LoginPage = () => {
             <h2 className="text-2xl font-bold mt-4 mb-2">
               {isLogin ? 'Welcome Back' : 'Create Account'}
             </h2>
-            <p className="text-gray-400">
+            <p className="text-slate-300/80">
               {isLogin ? 'Sign in to your account' : 'Join the future of satellite operations'}
             </p>
           </div>
@@ -104,7 +109,7 @@ const LoginPage = () => {
                   name="role"
                   value={formData.role}
                   onChange={handleInputChange}
-                  className="input"
+                  className="input bg-white/5 border-white/10 focus:border-sky-400"
                   required
                 >
                   <option value="operator">Operator</option>
@@ -123,7 +128,7 @@ const LoginPage = () => {
                   name="email"
                   value={formData.email}
                   onChange={handleInputChange}
-                  className="input pl-10"
+                  className="input pl-10 bg-white/5 border-white/10 focus:border-sky-400"
                   placeholder="Enter your email"
                   required
                 />
@@ -139,7 +144,7 @@ const LoginPage = () => {
                   name="password"
                   value={formData.password}
                   onChange={handleInputChange}
-                  className="input pl-10 pr-10"
+                  className="input pl-10 pr-10 bg-white/5 border-white/10 focus:border-sky-400"
                   placeholder="Enter your password"
                   required
                 />
@@ -172,17 +177,17 @@ const LoginPage = () => {
           </div>
 
           {/* Demo Credentials */}
-          <div className="mt-8 p-4 bg-gray-800 rounded-lg border border-gray-700">
-            <h3 className="text-sm font-medium text-gray-300 mb-3">Demo Credentials</h3>
+          <div className="mt-8 p-4 bg-white/5 rounded-lg border border-white/10">
+            <h3 className="text-sm font-medium text-white/80 mb-3">Demo Credentials</h3>
             <div className="space-y-2">
               {demoCredentials.map((cred, index) => (
                 <button
                   key={index}
                   onClick={() => fillDemoCredentials(cred.email, cred.password)}
-                  className="w-full text-left p-2 text-sm bg-gray-700 hover:bg-gray-600 rounded transition-colors"
+                  className="w-full text-left p-2 text-sm bg-white/5 hover:bg-white/10 rounded transition-colors"
                 >
-                  <div className="font-medium text-blue-400">{cred.role}</div>
-                  <div className="text-gray-400">{cred.email}</div>
+                  <div className="font-medium text-sky-400">{cred.role}</div>
+                  <div className="text-slate-300/80">{cred.email}</div>
                 </button>
               ))}
             </div>
