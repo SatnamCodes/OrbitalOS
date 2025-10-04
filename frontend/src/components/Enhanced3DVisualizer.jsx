@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { useEnhancedSatellitesStore } from '../stores/enhancedStores'
 import { Viewer, Entity } from 'resium'
 import * as Cesium from 'cesium'
@@ -13,6 +13,14 @@ import {
   Settings
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import {
+  twoline2satrec,
+  propagate,
+  gstime,
+  eciToGeodetic,
+  degreesLat,
+  degreesLong
+} from 'satellite.js'
 
 // Set Cesium base URL
 window.CESIUM_BASE_URL = '/cesium/'
@@ -27,6 +35,9 @@ const Enhanced3DVisualizer = () => {
   const { satellites, loadSatellites, isLoading } = useEnhancedSatellitesStore()
   
   const viewerRef = useRef()
+  const satrecCacheRef = useRef(new Map())
+  const pickMapRef = useRef(new Map())
+  const clickHandlerRef = useRef(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [viewerReady, setViewerReady] = useState(false)
   const [selectedSatellite, setSelectedSatellite] = useState(null)
@@ -38,6 +49,7 @@ const Enhanced3DVisualizer = () => {
     filterType: 'all',
     satelliteSize: 8
   })
+  const [currentTime, setCurrentTime] = useState(() => new Date())
 
   // Initialize satellites on mount
   useEffect(() => {
@@ -46,6 +58,18 @@ const Enhanced3DVisualizer = () => {
       loadSatellites()
     }
   }, [satellites.length, loadSatellites])
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date())
+    }, 5000)
+
+    return () => clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    satrecCacheRef.current.clear()
+  }, [satellites])
 
   // Get visualization data (limited for performance)
   const visualizationData = satellites
@@ -61,6 +85,33 @@ const Enhanced3DVisualizer = () => {
       return true
     })
     .slice(0, visualizationSettings.maxSatellites)
+
+  const propagatedVisualizationData = useMemo(() => {
+    return visualizationData
+      .map((satellite, index) => {
+        const { lat, lon, altKm } = propagateSatellitePosition(satellite, currentTime)
+
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+          return null
+        }
+
+        const altitudeMeters = Number.isFinite(altKm) ? altKm * 1000 : 0
+        const position = Cesium.Cartesian3.fromDegrees(lon, lat, altitudeMeters)
+        const identifierSource = satellite.norad_id ?? satellite.id ?? satellite.name ?? `idx-${index}`
+        const sanitizedIdentifier = String(identifierSource).replace(/\s+/g, '-').toLowerCase()
+        const entityId = `sat-${sanitizedIdentifier}`
+
+        return {
+          ...satellite,
+          entityId,
+          propagatedLat: lat,
+          propagatedLon: lon,
+          propagatedAltKm: Number.isFinite(altKm) ? altKm : satellite.alt_km ?? satellite.altitude ?? 0,
+          position
+        }
+      })
+      .filter(Boolean)
+  }, [visualizationData, currentTime])
 
   // Cesium viewer configuration
   const viewerOptions = {
@@ -109,20 +160,65 @@ const Enhanced3DVisualizer = () => {
     return Cesium.Color.WHITE
   }
 
+  const propagateSatellitePosition = (satellite, time) => {
+    const timestamp = time ?? currentTime
+
+    if (satellite?.tle_line1 && satellite?.tle_line2) {
+      const cacheKey = satellite.norad_id || satellite.id
+      let satrec = cacheKey ? satrecCacheRef.current.get(cacheKey) : null
+
+      if (!satrec) {
+        try {
+          satrec = twoline2satrec(satellite.tle_line1.trim(), satellite.tle_line2.trim())
+          if (cacheKey && satrec) {
+            satrecCacheRef.current.set(cacheKey, satrec)
+          }
+        } catch (error) {
+          console.warn('⚠️ Failed to parse TLE for satellite', satellite.name, error)
+          satrec = null
+        }
+      }
+
+      if (satrec) {
+        try {
+          const propagation = propagate(satrec, timestamp)
+          if (propagation.position) {
+            const gmst = gstime(timestamp)
+            const geodetic = eciToGeodetic(propagation.position, gmst)
+            const lat = degreesLat(geodetic.latitude)
+            const lon = degreesLong(geodetic.longitude)
+            const altKm = Number.isFinite(geodetic.height)
+              ? geodetic.height
+              : satellite.alt_km ?? satellite.altitude ?? 0
+
+            return { lat, lon, altKm }
+          }
+        } catch (error) {
+          console.warn('⚠️ SGP4 propagation failed for', satellite.name, error)
+        }
+      }
+    }
+
+    const lat = satellite.lat_deg ?? satellite.latitude ?? 0
+    const lon = satellite.lon_deg ?? satellite.longitude ?? 0
+    const altKm = satellite.alt_km ?? satellite.altitude ?? 0
+    return { lat, lon, altKm }
+  }
+
   // Create satellite entities
   const createSatelliteEntities = () => {
-    return visualizationData.map((satellite) => {
+    const pickMap = new Map()
+    const entities = propagatedVisualizationData.map((satellite) => {
       const color = getSatelliteColor(satellite)
-      const position = Cesium.Cartesian3.fromDegrees(
-        satellite.lon_deg,
-        satellite.lat_deg,
-        satellite.alt_km * 1000 // Convert to meters
-      )
+      const entityId = satellite.entityId || `sat-${satellite.norad_id || satellite.id}`
+
+      pickMap.set(entityId, satellite)
 
       return (
         <Entity
-          key={satellite.norad_id}
-          position={position}
+          key={entityId}
+          id={entityId}
+          position={satellite.position}
           point={{
             pixelSize: visualizationSettings.satelliteSize,
             color: color,
@@ -147,6 +243,9 @@ const Enhanced3DVisualizer = () => {
         />
       )
     })
+
+    pickMapRef.current = pickMap
+    return entities
   }
 
   // Handle viewer ready
@@ -165,10 +264,98 @@ const Enhanced3DVisualizer = () => {
       viewer.scene.globe.dynamicAtmosphereLighting = true
       viewer.scene.globe.atmospher.showSunGlow = true
       
-      console.log('🌍 Enhanced 3D viewer ready with', visualizationData.length, 'satellites')
-      toast.success(`Loaded ${visualizationData.length} satellites on 3D globe`)
+      console.log('🌍 Enhanced 3D viewer ready with', propagatedVisualizationData.length, 'satellites')
+      toast.success(`Loaded ${propagatedVisualizationData.length} satellites on 3D globe`)
     }
   }
+
+  useEffect(() => {
+    if (!viewerReady || !viewerRef.current?.cesiumElement) return
+
+    if (clickHandlerRef.current) {
+      clickHandlerRef.current.destroy()
+      clickHandlerRef.current = null
+    }
+
+    const viewer = viewerRef.current.cesiumElement
+    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas)
+
+    handler.setInputAction((movement) => {
+      const picked = viewer.scene.pick(movement.position)
+
+      if (Cesium.defined(picked) && picked.id) {
+        const entity = picked.id
+        const entityId = typeof entity === 'string'
+          ? entity
+          : (typeof entity.id === 'string' ? entity.id : entity.id?.id || entity.name)
+
+        if (entityId) {
+          const matchedSatellite = pickMapRef.current.get(entityId)
+          if (matchedSatellite) {
+            setSelectedSatellite(matchedSatellite)
+            return
+          }
+        }
+      }
+
+      setSelectedSatellite(null)
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK)
+
+    clickHandlerRef.current = handler
+
+    return () => {
+      handler.destroy()
+      clickHandlerRef.current = null
+    }
+  }, [viewerReady])
+
+  useEffect(() => {
+    if (!selectedSatellite) return
+
+    const match = propagatedVisualizationData.find((sat) => {
+      if (selectedSatellite.entityId && sat.entityId === selectedSatellite.entityId) return true
+      if (selectedSatellite.norad_id && sat.norad_id === selectedSatellite.norad_id) return true
+      if (selectedSatellite.id && sat.id === selectedSatellite.id) return true
+      return false
+    })
+
+    if (!match) return
+
+    const prevLat = selectedSatellite.propagatedLat ?? selectedSatellite.lat_deg ?? selectedSatellite.latitude
+    const prevLon = selectedSatellite.propagatedLon ?? selectedSatellite.lon_deg ?? selectedSatellite.longitude
+    const prevAlt = selectedSatellite.propagatedAltKm ?? selectedSatellite.alt_km ?? selectedSatellite.altitude
+
+    const nextLat = match.propagatedLat ?? match.lat_deg ?? match.latitude
+    const nextLon = match.propagatedLon ?? match.lon_deg ?? match.longitude
+    const nextAlt = match.propagatedAltKm ?? match.alt_km ?? match.altitude
+
+    const hasChanged =
+      Math.abs((prevLat ?? 0) - (nextLat ?? 0)) > 1e-6 ||
+      Math.abs((prevLon ?? 0) - (nextLon ?? 0)) > 1e-6 ||
+      Math.abs((prevAlt ?? 0) - (nextAlt ?? 0)) > 1e-6
+
+    if (!hasChanged) return
+
+    setSelectedSatellite((prev) => (prev ? { ...prev, ...match } : match))
+  }, [
+    propagatedVisualizationData,
+    selectedSatellite?.entityId,
+    selectedSatellite?.norad_id,
+    selectedSatellite?.id,
+    selectedSatellite?.propagatedLat,
+    selectedSatellite?.propagatedLon,
+    selectedSatellite?.propagatedAltKm
+  ])
+
+  const selectedAltitudeKm = selectedSatellite
+    ? selectedSatellite.propagatedAltKm ?? selectedSatellite.alt_km ?? selectedSatellite.altitude ?? null
+    : null
+  const selectedLatitude = selectedSatellite
+    ? selectedSatellite.propagatedLat ?? selectedSatellite.lat_deg ?? selectedSatellite.latitude ?? null
+    : null
+  const selectedLongitude = selectedSatellite
+    ? selectedSatellite.propagatedLon ?? selectedSatellite.lon_deg ?? selectedSatellite.longitude ?? null
+    : null
 
   // Toggle animation
   const toggleAnimation = () => {
@@ -220,7 +407,7 @@ const Enhanced3DVisualizer = () => {
             </div>
             <div>
               <div className="text-gray-400">Visualizing</div>
-              <div className="text-green-400 font-bold">{visualizationData.length}</div>
+              <div className="text-green-400 font-bold">{propagatedVisualizationData.length}</div>
             </div>
           </div>
         </motion.div>
@@ -380,7 +567,9 @@ const Enhanced3DVisualizer = () => {
             </div>
             <div>
               <span className="text-gray-400">Altitude:</span>
-              <span className="text-white ml-2">{selectedSatellite.alt_km?.toFixed(1)} km</span>
+              <span className="text-white ml-2">
+                {selectedAltitudeKm !== null ? `${selectedAltitudeKm.toFixed(1)} km` : 'N/A'}
+              </span>
             </div>
             <div>
               <span className="text-gray-400">Velocity:</span>
@@ -389,7 +578,7 @@ const Enhanced3DVisualizer = () => {
             <div>
               <span className="text-gray-400">Position:</span>
               <span className="text-white ml-2">
-                {selectedSatellite.lat_deg?.toFixed(2)}°, {selectedSatellite.lon_deg?.toFixed(2)}°
+                {selectedLatitude !== null ? `${selectedLatitude.toFixed(2)}°` : '—'}, {selectedLongitude !== null ? `${selectedLongitude.toFixed(2)}°` : '—'}
               </span>
             </div>
           </div>

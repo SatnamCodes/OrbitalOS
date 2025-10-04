@@ -1,6 +1,6 @@
-import React, { useMemo } from 'react'
+import React, { useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { motion } from 'framer-motion'
+import { motion, useScroll, useTransform } from 'framer-motion'
 import GlobalHeader from '../components/GlobalHeader'
 
 const featureVideoUrl = new URL('../../../visuals/44350-438661984.mp4', import.meta.url).href
@@ -54,6 +54,25 @@ const CTA_ACTIONS = [
 
 function LandingPage() {
   const navigate = useNavigate()
+  const heroRef = useRef(null)
+  const metricsRef = useRef(null)
+  const pillarsRef = useRef(null)
+  const videoRef = useRef(null)
+
+  const { scrollYProgress: heroProgress } = useScroll({ target: heroRef, offset: ['start start', 'end start'] })
+  const { scrollYProgress: metricsProgress } = useScroll({ target: metricsRef, offset: ['start bottom', 'end top'] })
+  const { scrollYProgress: pillarsProgress } = useScroll({ target: pillarsRef, offset: ['start bottom', 'end top'] })
+  const { scrollYProgress: videoProgress } = useScroll({ target: videoRef, offset: ['start bottom', 'end top'] })
+
+  const heroBgParallax = useTransform(heroProgress, [0, 1], [0, -180])
+  const heroContentParallax = useTransform(heroProgress, [0, 1], [0, -90])
+  const metricsBgParallax = useTransform(metricsProgress, [0, 1], [0, -60])
+  const metricsParallax = useTransform(metricsProgress, [0, 1], [60, -60])
+  const pillarsBgParallax = useTransform(pillarsProgress, [0, 1], [0, -80])
+  const pillarsParallax = useTransform(pillarsProgress, [0, 1], [80, -80])
+  const videoParallax = useTransform(videoProgress, [0, 1], [120, -120])
+  const videoContentParallax = useTransform(videoProgress, [0, 1], [40, -40])
+
   const stars = useMemo(
     () =>
       Array.from({ length: STAR_COUNT }, (_, index) => ({
@@ -72,9 +91,9 @@ function LandingPage() {
     <>
       <GlobalHeader />
       <main className="bg-black text-white">
-        {/* Hero */}
-        <section className="relative overflow-hidden pt-28 pb-24 sm:pb-32">
-          <div className="absolute inset-0">
+    {/* Hero */}
+        <section ref={heroRef} className="relative overflow-hidden pt-28 pb-24 sm:pb-32 min-h-screen">
+          <motion.div className="absolute inset-0" style={{ y: heroBgParallax }}>
             <div className="absolute inset-0 bg-gradient-to-b from-black via-[#050510] to-black" />
             <div className="absolute inset-y-0 left-0 w-[420px] blur-3xl bg-sky-500/30" />
             <div className="absolute inset-y-16 right-[-12%] w-[520px] bg-gradient-to-br from-fuchsia-500/40 via-purple-600/30 to-blue-500/40 blur-3xl" />
@@ -100,9 +119,12 @@ function LandingPage() {
                 />
               ))}
             </div>
-          </div>
+          </motion.div>
 
-          <div className="relative z-10 mx-auto flex max-w-6xl flex-col justify-between gap-16 px-6 lg:flex-row lg:items-center">
+          <motion.div
+            className="relative z-10 mx-auto flex max-w-6xl flex-col justify-between gap-16 px-6 lg:flex-row lg:items-center"
+            style={{ y: heroContentParallax }}
+          >
             <div className="max-w-2xl space-y-6">
               <p className="text-sm uppercase tracking-[0.5em] text-white/60">Every void needs an order</p>
               <motion.h1
@@ -158,13 +180,19 @@ function LandingPage() {
                 ))}
               </ul>
             </div>
-          </div>
+          </motion.div>
         </section>
 
         {/* Mission metrics */}
-        <section className="relative border-y border-white/10 bg-[#05050d] py-16 sm:py-20">
-          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent opacity-5" />
-          <div className="relative mx-auto grid max-w-5xl grid-cols-1 gap-10 px-6 sm:grid-cols-3">
+        <section ref={metricsRef} className="relative border-y border-white/10 bg-[#05050d] py-16 sm:py-20">
+          <motion.div
+            className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent opacity-5"
+            style={{ y: metricsBgParallax }}
+          />
+          <motion.div
+            className="relative mx-auto grid max-w-6xl grid-cols-1 gap-10 px-6 sm:grid-cols-3"
+            style={{ y: metricsParallax }}
+          >
             {MISSION_METRICS.map((metric) => (
               <div key={metric.label} className="space-y-2 border border-white/10 bg-white/5 px-6 py-6 backdrop-blur-sm">
                 <p className="text-xs uppercase tracking-[0.35em] text-white/50">{metric.label}</p>
@@ -172,14 +200,23 @@ function LandingPage() {
                 <p className="text-sm text-white/60">{metric.detail}</p>
               </div>
             ))}
-          </div>
+          </motion.div>
         </section>
 
         {/* Constellation pillars */}
-        <section className="relative overflow-hidden py-24">
-          <div className="absolute inset-0 bg-gradient-to-b from-black via-[#060510] to-black" />
-          <div className="absolute -top-40 left-1/2 h-[520px] w-[520px] -translate-x-1/2 rounded-full bg-indigo-500/20 blur-3xl" />
-          <div className="relative mx-auto flex max-w-6xl flex-col gap-16 px-6">
+        <section ref={pillarsRef} className="relative overflow-hidden py-24">
+          <motion.div
+            className="absolute inset-0 bg-gradient-to-b from-black via-[#060510] to-black"
+            style={{ y: pillarsBgParallax }}
+          />
+          <motion.div
+            className="absolute -top-40 left-1/2 h-[520px] w-[520px] -translate-x-1/2 rounded-full bg-indigo-500/20 blur-3xl"
+            style={{ y: pillarsBgParallax }}
+          />
+          <motion.div
+            className="relative mx-auto flex max-w-6xl flex-col gap-16 px-6"
+            style={{ y: pillarsParallax }}
+          >
             <div className="max-w-2xl space-y-4">
               <p className="text-xs uppercase tracking-[0.35em] text-white/50">Mission architecture</p>
               <h2 className="text-3xl font-semibold text-white sm:text-4xl">
@@ -208,22 +245,29 @@ function LandingPage() {
                 </div>
               ))}
             </div>
-          </div>
+          </motion.div>
         </section>
 
         {/* Video CTA */}
-        <section className="relative overflow-hidden border-y border-white/10 py-24">
-          <video
+        <section ref={videoRef} className="relative overflow-hidden border-y border-white/10 py-24">
+          <motion.video
             className="absolute inset-0 h-full w-full object-cover opacity-40"
             src={featureVideoUrl}
             autoPlay
             loop
             muted
             playsInline
+            style={{ y: videoParallax }}
           />
-          <div className="absolute inset-0 bg-gradient-to-b from-black via-black/70 to-black" />
+          <motion.div
+            className="absolute inset-0 bg-gradient-to-b from-black via-black/70 to-black"
+            style={{ y: videoParallax }}
+          />
 
-          <div className="relative mx-auto flex max-w-5xl flex-col items-start gap-10 px-6 text-left">
+          <motion.div
+            className="relative mx-auto flex max-w-6xl flex-col items-start gap-10 px-6 text-left"
+            style={{ y: videoContentParallax }}
+          >
             <p className="text-xs uppercase tracking-[0.35em] text-white/50">Launch orchestration</p>
             <h2 className="text-3xl font-semibold text-white sm:text-4xl">
               Model the window, reserve the slot, execute with confidence
@@ -251,7 +295,7 @@ function LandingPage() {
                 </button>
               ))}
             </div>
-          </div>
+          </motion.div>
         </section>
 
         {/* Closing statement */}

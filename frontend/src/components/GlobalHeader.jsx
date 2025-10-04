@@ -4,11 +4,11 @@ import { Bell } from 'lucide-react'
 import clsx from 'clsx'
 
 const NAV_ITEMS = [
-  { key: 'visualizer', label: 'Visualizer', to: '/visualizer', variant: 'primary' },
-  { key: 'risk', label: 'Risk Analyser', to: '/dashboard?view=risk', variant: 'default' },
-  { key: 'alerts', label: 'Alerts', to: '/alerts', variant: 'icon' },
-  { key: 'reserve', label: 'Reserve Orbit', to: '/booking', variant: 'accent' },
+  { key: 'details', label: 'Details', to: '/visualizer', variant: 'primary' },
+  { key: 'visualizer', label: 'Visualizer', to: '/dashboard?view=risk', variant: 'default' },
   { key: 'conflict', label: 'Conflict Analysis', to: '/dashboard?view=conflict', variant: 'default' },
+  { key: 'reserve', label: 'Reserve Orbit', to: '/booking', variant: 'accent' },
+  { key: 'alerts', label: 'Alerts', to: '/alerts', variant: 'icon' },
 ]
 
 const resolveIsActive = (location, item) => {
@@ -41,7 +41,7 @@ function GlobalHeader() {
         </button>
 
         <span className="rounded-full border border-white/20 bg-black px-5 py-2 text-[11px] font-semibold uppercase tracking-[0.35em] text-white">
-          OrbixX
+          Orbital OS
         </span>
 
         {NAV_ITEMS.map((item) => {
