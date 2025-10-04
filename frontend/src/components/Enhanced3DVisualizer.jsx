@@ -37,6 +37,8 @@ const Enhanced3DVisualizer = () => {
   const viewerRef = useRef()
   const satrecCacheRef = useRef(new Map())
   const pickMapRef = useRef(new Map())
+  const hasAppliedTiltRef = useRef(false)
+  const previousOffsetsRef = useRef({ lat: 0, lon: 0 })
   const clickHandlerRef = useRef(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [viewerReady, setViewerReady] = useState(false)
@@ -86,6 +88,15 @@ const Enhanced3DVisualizer = () => {
     })
     .slice(0, visualizationSettings.maxSatellites)
 
+  const normalizeDegrees = (value) => {
+    if (!Number.isFinite(value)) return 0
+    let normalized = ((value + 180) % 360 + 360) % 360 - 180
+    if (normalized === -180) {
+      normalized = 180
+    }
+    return normalized
+  }
+
   const propagatedVisualizationData = useMemo(() => {
     return visualizationData
       .map((satellite, index) => {
@@ -95,8 +106,6 @@ const Enhanced3DVisualizer = () => {
           return null
         }
 
-        const altitudeMeters = Number.isFinite(altKm) ? altKm * 1000 : 0
-        const position = Cesium.Cartesian3.fromDegrees(lon, lat, altitudeMeters)
         const identifierSource = satellite.norad_id ?? satellite.id ?? satellite.name ?? `idx-${index}`
         const sanitizedIdentifier = String(identifierSource).replace(/\s+/g, '-').toLowerCase()
         const entityId = `sat-${sanitizedIdentifier}`
@@ -107,11 +116,68 @@ const Enhanced3DVisualizer = () => {
           propagatedLat: lat,
           propagatedLon: lon,
           propagatedAltKm: Number.isFinite(altKm) ? altKm : satellite.alt_km ?? satellite.altitude ?? 0,
-          position
+          sourceLat: satellite.lat_deg ?? satellite.latitude ?? null,
+          sourceLon: satellite.lon_deg ?? satellite.longitude ?? null
         }
       })
       .filter(Boolean)
   }, [visualizationData, currentTime])
+
+  const alignmentOffsets = useMemo(() => {
+    if (!propagatedVisualizationData.length) {
+      return { lat: 0, lon: 0, samples: 0 }
+    }
+
+    let latDeltaSum = 0
+    let lonDeltaSum = 0
+    let samples = 0
+
+    propagatedVisualizationData.forEach((satellite) => {
+      if (!Number.isFinite(satellite.sourceLat) || !Number.isFinite(satellite.sourceLon)) {
+        return
+      }
+
+      const latDelta = satellite.propagatedLat - satellite.sourceLat
+      const lonDelta = normalizeDegrees(satellite.propagatedLon - satellite.sourceLon)
+
+      if (Number.isFinite(latDelta) && Number.isFinite(lonDelta)) {
+        latDeltaSum += latDelta
+        lonDeltaSum += lonDelta
+        samples += 1
+      }
+    })
+
+    if (!samples) {
+      return { lat: 0, lon: 0, samples: 0 }
+    }
+
+    return {
+      lat: latDeltaSum / samples,
+      lon: lonDeltaSum / samples,
+      samples
+    }
+  }, [propagatedVisualizationData])
+
+  const alignedVisualizationData = useMemo(() => {
+    return propagatedVisualizationData.map((satellite) => {
+      const correctedLat = satellite.propagatedLat - alignmentOffsets.lat
+      const correctedLon = Cesium.Math.convertLongitudeRange(satellite.propagatedLon - alignmentOffsets.lon)
+      const correctedAltKm = satellite.propagatedAltKm
+      const position = Cesium.Cartesian3.fromDegrees(
+        correctedLon,
+        correctedLat,
+        Number.isFinite(correctedAltKm) ? correctedAltKm * 1000 : 0
+      )
+
+      return {
+        ...satellite,
+        correctedLat,
+        correctedLon,
+        correctedAltKm,
+        position
+      }
+    })
+  }, [propagatedVisualizationData, alignmentOffsets])
 
   // Cesium viewer configuration
   const viewerOptions = {
@@ -208,7 +274,7 @@ const Enhanced3DVisualizer = () => {
   // Create satellite entities
   const createSatelliteEntities = () => {
     const pickMap = new Map()
-    const entities = propagatedVisualizationData.map((satellite) => {
+    const entities = alignedVisualizationData.map((satellite) => {
       const color = getSatelliteColor(satellite)
       const entityId = satellite.entityId || `sat-${satellite.norad_id || satellite.id}`
 
@@ -264,8 +330,8 @@ const Enhanced3DVisualizer = () => {
       viewer.scene.globe.dynamicAtmosphereLighting = true
       viewer.scene.globe.atmospher.showSunGlow = true
       
-      console.log('🌍 Enhanced 3D viewer ready with', propagatedVisualizationData.length, 'satellites')
-      toast.success(`Loaded ${propagatedVisualizationData.length} satellites on 3D globe`)
+      console.log('🌍 Enhanced 3D viewer ready with', alignedVisualizationData.length, 'satellites')
+      toast.success(`Loaded ${alignedVisualizationData.length} satellites on 3D globe`)
     }
   }
 
@@ -312,7 +378,7 @@ const Enhanced3DVisualizer = () => {
   useEffect(() => {
     if (!selectedSatellite) return
 
-    const match = propagatedVisualizationData.find((sat) => {
+    const match = alignedVisualizationData.find((sat) => {
       if (selectedSatellite.entityId && sat.entityId === selectedSatellite.entityId) return true
       if (selectedSatellite.norad_id && sat.norad_id === selectedSatellite.norad_id) return true
       if (selectedSatellite.id && sat.id === selectedSatellite.id) return true
@@ -321,13 +387,13 @@ const Enhanced3DVisualizer = () => {
 
     if (!match) return
 
-    const prevLat = selectedSatellite.propagatedLat ?? selectedSatellite.lat_deg ?? selectedSatellite.latitude
-    const prevLon = selectedSatellite.propagatedLon ?? selectedSatellite.lon_deg ?? selectedSatellite.longitude
-    const prevAlt = selectedSatellite.propagatedAltKm ?? selectedSatellite.alt_km ?? selectedSatellite.altitude
+    const prevLat = selectedSatellite.correctedLat ?? selectedSatellite.propagatedLat ?? selectedSatellite.lat_deg ?? selectedSatellite.latitude
+    const prevLon = selectedSatellite.correctedLon ?? selectedSatellite.propagatedLon ?? selectedSatellite.lon_deg ?? selectedSatellite.longitude
+    const prevAlt = selectedSatellite.correctedAltKm ?? selectedSatellite.propagatedAltKm ?? selectedSatellite.alt_km ?? selectedSatellite.altitude
 
-    const nextLat = match.propagatedLat ?? match.lat_deg ?? match.latitude
-    const nextLon = match.propagatedLon ?? match.lon_deg ?? match.longitude
-    const nextAlt = match.propagatedAltKm ?? match.alt_km ?? match.altitude
+    const nextLat = match.correctedLat ?? match.propagatedLat ?? match.lat_deg ?? match.latitude
+    const nextLon = match.correctedLon ?? match.propagatedLon ?? match.lon_deg ?? match.longitude
+    const nextAlt = match.correctedAltKm ?? match.propagatedAltKm ?? match.alt_km ?? match.altitude
 
     const hasChanged =
       Math.abs((prevLat ?? 0) - (nextLat ?? 0)) > 1e-6 ||
@@ -338,24 +404,61 @@ const Enhanced3DVisualizer = () => {
 
     setSelectedSatellite((prev) => (prev ? { ...prev, ...match } : match))
   }, [
-    propagatedVisualizationData,
+    alignedVisualizationData,
     selectedSatellite?.entityId,
     selectedSatellite?.norad_id,
     selectedSatellite?.id,
-    selectedSatellite?.propagatedLat,
-    selectedSatellite?.propagatedLon,
-    selectedSatellite?.propagatedAltKm
+    selectedSatellite?.correctedLat,
+    selectedSatellite?.correctedLon,
+    selectedSatellite?.correctedAltKm
   ])
 
   const selectedAltitudeKm = selectedSatellite
-    ? selectedSatellite.propagatedAltKm ?? selectedSatellite.alt_km ?? selectedSatellite.altitude ?? null
+    ? selectedSatellite.correctedAltKm ?? selectedSatellite.propagatedAltKm ?? selectedSatellite.alt_km ?? selectedSatellite.altitude ?? null
     : null
   const selectedLatitude = selectedSatellite
-    ? selectedSatellite.propagatedLat ?? selectedSatellite.lat_deg ?? selectedSatellite.latitude ?? null
+    ? selectedSatellite.correctedLat ?? selectedSatellite.propagatedLat ?? selectedSatellite.lat_deg ?? selectedSatellite.latitude ?? null
     : null
   const selectedLongitude = selectedSatellite
-    ? selectedSatellite.propagatedLon ?? selectedSatellite.lon_deg ?? selectedSatellite.longitude ?? null
+    ? selectedSatellite.correctedLon ?? selectedSatellite.propagatedLon ?? selectedSatellite.lon_deg ?? selectedSatellite.longitude ?? null
     : null
+
+  useEffect(() => {
+    const prev = previousOffsetsRef.current
+    const deltaLat = Math.abs(prev.lat - alignmentOffsets.lat)
+    const deltaLon = Math.abs(prev.lon - alignmentOffsets.lon)
+
+    if (deltaLat > 0.05 || deltaLon > 0.05) {
+      hasAppliedTiltRef.current = false
+    }
+
+    previousOffsetsRef.current = { lat: alignmentOffsets.lat, lon: alignmentOffsets.lon }
+  }, [alignmentOffsets.lat, alignmentOffsets.lon])
+
+  useEffect(() => {
+    if (!viewerReady) return
+    if (!viewerRef.current?.cesiumElement) return
+    if (hasAppliedTiltRef.current) return
+
+    const needsAdjustment =
+      Math.abs(alignmentOffsets.lat) > 0.05 || Math.abs(alignmentOffsets.lon) > 0.05
+
+    if (!needsAdjustment) return
+
+    const viewer = viewerRef.current.cesiumElement
+    const camera = viewer.camera
+
+    camera.setView({
+      destination: camera.position,
+      orientation: {
+        heading: camera.heading - Cesium.Math.toRadians(alignmentOffsets.lon),
+        pitch: camera.pitch,
+        roll: Cesium.Math.toRadians(alignmentOffsets.lat)
+      }
+    })
+
+    hasAppliedTiltRef.current = true
+  }, [alignmentOffsets, viewerReady])
 
   // Toggle animation
   const toggleAnimation = () => {
@@ -375,6 +478,7 @@ const Enhanced3DVisualizer = () => {
         destination: Cesium.Cartesian3.fromDegrees(0, 30, 15000000)
       })
       setSelectedSatellite(null)
+      hasAppliedTiltRef.current = false
       toast.success('View reset to Earth overview')
     }
   }
@@ -407,7 +511,7 @@ const Enhanced3DVisualizer = () => {
             </div>
             <div>
               <div className="text-gray-400">Visualizing</div>
-              <div className="text-green-400 font-bold">{propagatedVisualizationData.length}</div>
+              <div className="text-green-400 font-bold">{alignedVisualizationData.length}</div>
             </div>
           </div>
         </motion.div>

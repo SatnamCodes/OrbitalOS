@@ -231,6 +231,32 @@ class EnhancedSatelliteService {
     }
   }
 
+  async predictRisk(request) {
+    try {
+      console.log('🧠 Requesting ML risk prediction...', request)
+
+      const response = await fetch(`${this.apiUrl}/api/v1/risk/predict`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(request),
+        signal: AbortSignal.timeout(20000)
+      })
+
+      if (!response.ok) {
+        throw new Error(`Risk prediction failed: ${response.status} ${response.statusText}`)
+      }
+
+      const result = await response.json()
+      console.log('✅ ML risk prediction result:', result)
+      return result
+    } catch (error) {
+      console.error('❌ ML risk prediction failed:', error)
+      throw error
+    }
+  }
+
   // Create proper conjunction request for enhanced API
   createConjunctionRequest(options = {}) {
     const request = {
