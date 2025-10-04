@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+  "dev": "vite --strictPort --port 5173",
     "build": "vite build",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
@@ -12,7 +12,7 @@
     "start:full": "concurrently \"npm run start:backend\" \"npm run dev\" --names \"🦀BACKEND,⚛️FRONTEND\" --prefix-colors \"yellow,blue\""
   },
   "dependencies": {
-    "@react-three/drei": "^9.122.0",
+    "@react-three/drei": "10.7.6",
     "@react-three/fiber": "^8.18.0",
     "axios": "^1.6.0",
     "cesium": "^1.111.0",

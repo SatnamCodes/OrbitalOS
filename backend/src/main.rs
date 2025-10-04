@@ -8,8 +8,21 @@ use std::env;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::time::{interval, Duration};
-use tracing::{info, Level};
+use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
+use webbrowser;
+
+#[cfg(feature = "embed_frontend")]
+use {
+    actix_web::{http::header, HttpRequest},
+    mime_guess::from_path,
+    rust_embed::RustEmbed,
+};
+
+#[cfg(feature = "embed_frontend")]
+#[derive(RustEmbed)]
+#[folder = "../frontend/dist"]
+struct EmbeddedDist;
 
 use satellite_service::SatelliteService;
 
@@ -155,6 +168,23 @@ async fn start_position_updater(satellite_service: Arc<Mutex<SatelliteService>>)
     }
 }
 
+#[cfg(feature = "embed_frontend")]
+async fn embedded_frontend_handler(req: HttpRequest) -> Result<HttpResponse> {
+    let path = req.path().trim_start_matches('/');
+    let candidate = if path.is_empty() { "index.html" } else { path };
+    let asset = EmbeddedDist::get(candidate).or_else(|| EmbeddedDist::get("index.html"));
+
+    if let Some(content) = asset {
+        let body: actix_web::body::BoxBody = web::Bytes::from(content.data.into_owned()).into();
+        let mime_type = from_path(candidate).first_or_octet_stream();
+        Ok(HttpResponse::Ok()
+            .insert_header((header::CONTENT_TYPE, mime_type.as_ref()))
+            .body(body))
+    } else {
+        Ok(HttpResponse::NotFound().finish())
+    }
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // Initialize logging
@@ -220,8 +250,17 @@ async fn main() -> std::io::Result<()> {
     );
 
     let static_dir_for_server = static_dir.clone();
+    let bind_host = host.clone();
+    let browser_host = match host.as_str() {
+        "0.0.0.0" | "127.0.0.1" => "localhost".to_string(),
+        _ => host.clone(),
+    };
+    let browser_url = format!("http://{}:{}/", browser_host, port);
+    let should_open_browser = env::var("AUTO_OPEN_BROWSER")
+        .map(|value| value != "false" && value != "0")
+        .unwrap_or(true);
 
-    HttpServer::new(move || {
+    let server = HttpServer::new(move || {
         let cors = Cors::default()
             .allow_any_origin()
             .allow_any_method()
@@ -251,11 +290,31 @@ async fn main() -> std::io::Result<()> {
                     .index_file("index.html")
                     .prefer_utf8(true),
             );
+        } else {
+            #[cfg(feature = "embed_frontend")]
+            {
+                // Fallback to embedded assets
+                info!("Serving embedded frontend assets (feature=embed_frontend)");
+                app = app.default_service(web::get().to(embedded_frontend_handler));
+            }
         }
 
         app
     })
-    .bind((host, port))?
-    .run()
-    .await
+    .bind((bind_host, port))?
+    .run();
+
+    if should_open_browser {
+        let url = browser_url.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            match tokio::task::spawn_blocking(move || webbrowser::open(&url)).await {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => warn!("Failed to open browser automatically: {}", err),
+                Err(err) => warn!("Failed to open browser automatically: {}", err),
+            }
+        });
+    }
+
+    server.await
 }
