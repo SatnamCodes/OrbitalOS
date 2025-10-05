@@ -1,5 +1,37 @@
 # OrbitalOS – Simple Local Setup (No Docker)
 
+> Quick Start (just want to see it running?):
+>
+> ```powershell
+> git clone https://github.com/SatnamCodes/OrbitalOS.git
+> cd OrbitalOS
+> 
+> # Install frontend deps
+> cd frontend; npm install; cd ..
+> 
+> # Start primary API (sat_api) on port 3000
+> cd backend/sat_api; $env:PORT=3000; cargo run
+> # (Leave it running)
+> ```
+> Open a second terminal:
+> ```powershell
+> cd OrbitalOS/frontend
+> npm run dev
+> ```
+> Then visit: http://localhost:5173/
+>
+> Or on Windows (single step):
+> ```powershell
+> start_backend_frontend.bat
+> ```
+>
+> Need the legacy/secondary backend too? Use:
+> ```powershell
+> start_dev.bat
+> ```
+
+---
+
 This guide shows how to run OrbitalOS locally (backend + satellite API + frontend) using plain Rust & Node.js tooling—no Docker.
 
 ---
